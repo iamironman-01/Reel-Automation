@@ -14,7 +14,7 @@ sources (hashtags / creators / collections)      pasted links (optional)
         schedule rules ──► scheduler fires at 20:00, picks the next N
                                     │
                          sender ──► your friend
-                    (dry run / Instagram / Telegram)
+            (Instagram DM / dry run / official API / Telegram)
 ```
 
 It has these parts:
@@ -23,13 +23,13 @@ It has these parts:
 - **Automatic discovery**: finds reels from your sources and tops the queue up. Off by default.
 - **Schedule rules**: time, days, number of reels and recipient, written in `config/schedules.yaml`.
 - **Scheduler**: at each rule's time it sends the next N pending reels (APScheduler 3.x).
-- **Pluggable senders**: dry-run, `instagrapi`, official API, Telegram. The queue, scheduler and dashboard do not depend on which one is used.
+- **Pluggable senders**: `instagrapi` (real Instagram DMs, the main route), dry-run, official API, Telegram (optional). The queue, scheduler and dashboard do not depend on which one is used.
 - **Dashboard**: a Streamlit page to see the queue, history and discovery status, edit schedules, and pause sending.
 
 ## Status
 
-- **Built and tested with fakes:** every part above. 580 automated tests pass (6 are skipped when PyYAML is not installed; they run in CI).
-- **Not yet verified against the real services:** Instagram login, discovery and sending, Telegram, the Meta API, the Streamlit UI, real APScheduler timing, and the Docker and Render deployments. The first run on a test account is the real test.
+- **Built and tested with fakes:** every part above. The automated test suite passes (a few tests are skipped when PyYAML is not installed; they run in CI).
+- **Not yet verified against the real services:** Instagram login, discovery and sending (native reel DMs included), Telegram, the Meta API, the Streamlit UI, real APScheduler timing, and the Docker and Render deployments. The first run on a test account is the real test. `python -m reeldrop instagram-check` is the pre-flight for that.
 - **Safe by default:** the default sender is `dry_run`, which sends nothing, and discovery is off until you enable it.
 
 ## Ways to run it
@@ -53,17 +53,17 @@ It has these parts:
 
 ## Read this before sending real DMs
 
-Instagram has no open, official way for a personal account to DM a friend from code. Pick a route knowingly:
+To put a reel into a friend's Instagram DMs as a real reel share, use **Route B (`SENDER=instagrapi`)**. Instagram has no open, official way for a personal account to do that from code, so Route B uses the unofficial mobile API. Pick a route knowingly:
 
 | Route | `SENDER` value | How it works | Sends any reel to a friend? | Risk |
 |-------|----------------|--------------|-----------------------------|------|
 | A. Official Messaging API | `official` | Meta Graph API with a Business/Creator account | No. Only replies within 24 hours after the friend messages you, and it sends the reel link as text | Low, fully allowed |
-| B. Unofficial private API (`instagrapi`) | `instagrapi` | Logs in as your account and uses Instagram's mobile API | Yes | **High**: violates Instagram's Terms of Service. Action blocks or a permanent ban are possible |
+| **B. Unofficial private API (`instagrapi`)** (main route) | `instagrapi` | Logs in as your account and shares the reel into the friend's DMs like the Share button does. If the native share fails it sends the link instead | Yes, as a real reel share | **High**: violates Instagram's Terms of Service. Action blocks or a permanent ban are possible |
 | C. Browser automation | not implemented | Clicks through instagram.com | Yes | High, same Terms issue, and breaks when the site changes |
-| D. Telegram bot | `telegram` | Sends the reel links to your friend on Telegram | Yes, as links | None |
+| D. Telegram bot (optional alternative) | `telegram` | Sends the reel links to your friend on Telegram, not Instagram | Yes, as links | None |
 | Dry run | `dry_run` (default) | Prints what it would send | n/a | None |
 
-**Route B is against Instagram's Terms of Service.** Use only a separate test account, keep `daily_cap` low (5 to 10), keep `gap_seconds` at 30 or more, and expect that the account may be blocked or banned. The library can also stop working after an Instagram update. If you want zero account risk, use Route D. Route C is not covered by this project.
+**Route B is against Instagram's Terms of Service.** Use only a separate test account, keep `daily_cap` low (5 to 10), keep `gap_seconds` at 30 or more, and expect that the account may be blocked or banned. The library can also stop working after an Instagram update. Telegram (Route D) is only an optional extra: alerts to yourself, phone control, or a fallback if your friend prefers it. Route C is not covered by this project.
 
 ## Quickstart
 
@@ -107,7 +107,45 @@ Run the dashboard in a second terminal and open http://localhost:8501:
 streamlit run dashboard.py
 ```
 
-Only switch `SENDER` in `.env` to a real route after dry-run works, and start with a test account (see the golden rules).
+Only switch `SENDER` in `.env` to a real route after dry-run works, and start with a test account (see the golden rules). To deliver to Instagram DMs, follow the next section.
+
+## Send to Instagram (step by step)
+
+This is the main way to get reels into a friend's Instagram DMs. It has not been verified against live Instagram yet, so go slowly.
+
+1. **Use a test Instagram account** as the sender, not your main one. Log in to it once in the Instagram app and clear any security prompt.
+2. **Set `.env`**:
+   ```text
+   SENDER=instagrapi
+   IG_USERNAME=your_test_account
+   IG_PASSWORD=its_password
+   IG_TOTP_SECRET=        # optional, recommended if the account uses an authenticator app
+   IG_VERIFICATION_CODE=  # optional, a one-time code if Instagram asks for one
+   ```
+   `IG_TOTP_SECRET` is the base32 seed shown when you set up two-factor with an authenticator app. With it, ReelDrop can generate the login code itself. `IG_VERIFICATION_CODE` is a single code for one login attempt.
+3. **Put your friend's Instagram username** (without `@`) as `recipient` in `config/schedules.yaml`. Keep `daily_cap` low (5 to 10) and `gap_seconds` at 30 or more.
+4. **Check the login** (sends nothing):
+   ```bash
+   python -m reeldrop instagram-check
+   ```
+5. **Look up a recipient and send a test text to your own second account** (not your friend yet):
+   ```bash
+   python -m reeldrop instagram-check --to your_second_account
+   python -m reeldrop instagram-check --to your_second_account --send-test-text
+   ```
+6. **Send one real reel to the same second account.** The output says whether it arrived as a native reel share or fell back to a link:
+   ```bash
+   python -m reeldrop instagram-check --to your_second_account --reel "https://www.instagram.com/reel/XXXXXXXXXXX/"
+   ```
+7. **Start the scheduler** (`python main.py`) once the reel looks right on your second account. Add your friend only after that, with their consent.
+
+Things to know:
+
+- The friend should follow the sending account, or accept it. Otherwise the DM can land under **Message requests**.
+- Reels from private accounts will not preview for the friend.
+- `instagram-check` sends nothing unless you pass `--send-test-text` or `--reel`, and both need `--to`.
+- If Instagram blocks or challenges the account, sending is paused automatically. Stop, clear the warning in the Instagram app, wait 24 to 48 hours, and lower `daily_cap`.
+- Telegram stays optional: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_MY_CHAT_ID` if you want alerts on your phone.
 
 ## CLI usage
 
@@ -118,6 +156,7 @@ python -m reeldrop remove <id>
 python -m reeldrop move <id> {up,down,top,bottom}                     # reorder a pending reel
 python -m reeldrop import-collection "<name>" [--limit N] [--dry-run]  # needs instagrapi credentials
 python -m reeldrop discover [--sources | --dry-run]                    # auto-discovery, see below
+python -m reeldrop instagram-check [--to USER] [--send-test-text] [--reel URL]   # Instagram pre-flight, see above
 ```
 
 `add` rejects links that are not Instagram reel/post links, and reels already in the queue. Tracking parameters are stripped, so the same reel with a different `?igsh=` counts as a duplicate.
@@ -128,11 +167,13 @@ python -m reeldrop discover [--sources | --dry-run]                    # auto-di
 
 | Variable | Used for |
 |----------|----------|
-| `SENDER` | `dry_run`, `instagrapi`, `official` or `telegram` |
+| `SENDER` | `instagrapi` (real Instagram DMs), `dry_run` (default), `official` or `telegram` |
 | `TZ_NAME` | Timezone for timestamps, default `Asia/Kolkata` |
-| `IG_USERNAME`, `IG_PASSWORD` | Route B login |
+| `IG_USERNAME`, `IG_PASSWORD` | Route B login (Instagram DMs) |
+| `IG_TOTP_SECRET` | Optional, recommended: base32 two-factor seed so the login code is generated automatically |
+| `IG_VERIFICATION_CODE` | Optional: one-time code if Instagram asks for one at login |
 | `IG_ACCESS_TOKEN`, `IG_RECIPIENT_IGSID` | Route A |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_FRIEND_CHAT_ID` | Route D |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_FRIEND_CHAT_ID` | Route D (optional: delivery over Telegram instead of Instagram) |
 | `TELEGRAM_MY_CHAT_ID` | Optional alerts to yourself (pause, empty queue, results) |
 | `TELEGRAM_CONTROL` | `1` to let your bot accept `/add`, `/pause`, `/status` from `TELEGRAM_MY_CHAT_ID` (see Extensions) |
 | `DASHBOARD_PASSWORD` | Dashboard password. The default `change-me` is refused |
@@ -182,7 +223,7 @@ The scheduler checks the file's modification time every 60 seconds and reloads i
   python -c "from reeldrop.settings import set_paused; set_paused(True)"    # pause
   python -c "from reeldrop.settings import set_paused; set_paused(False)"   # resume
   ```
-- **Auto-pause**: if the sender reports that Instagram blocked or challenged the account, sending pauses and an alert is sent (if Telegram alerts are configured). Normal errors are retried once. The status and log are written together right after a successful send, and missed runs are coalesced, so a crash or restart should not send the same reel twice.
+- **Auto-pause**: if the sender reports that Instagram blocked or challenged the account, sending pauses and an optional Telegram alert is sent (if configured). Normal errors are retried once. The status and log are written together right after a successful send, and missed runs are coalesced, so a crash or restart should not send the same reel twice.
 - **After a pause**: clear any warning in the Instagram app, wait 24 to 48 hours, lower `daily_cap`, then resume.
 
 Stop immediately if Instagram shows any warning. See [reeldrop-plan/11-risks-and-safety.md](reeldrop-plan/11-risks-and-safety.md) for the full risk table.
@@ -230,7 +271,7 @@ or build the image with your own IDs by setting `REELDROP_UID` and `REELDROP_GID
 
 **Surviving a reboot.** The containers come back on their own if the Docker service starts at boot. On systemd Linux: `sudo systemctl enable docker`. Then reboot once and check `docker compose ps` and the scheduler logs before trusting it.
 
-**Host choice.** A home machine or Raspberry Pi is best for Route B, because home IPs trigger fewer Instagram security checks than cloud IPs. A free-tier cloud VM is fine for Routes A and D.
+**Host choice.** A home machine or Raspberry Pi is best for Route B (Instagram DMs), because home IPs trigger fewer Instagram security checks than cloud IPs. A free-tier cloud VM is fine for Routes A and D.
 
 ### Backup
 
@@ -255,7 +296,7 @@ The archive contains `session.json` and the database, so keep it private. To res
 ```
 Reel-Automation/
 ├── reeldrop/                  # the Python package
-│   ├── __main__.py            # CLI: add / list / remove / move / import-collection / discover
+│   ├── __main__.py            # CLI: add / list / remove / move / import-collection / discover / instagram-check
 │   ├── db.py                  # SQLite connection, schema, in-place migration
 │   ├── queue.py               # queue functions (add, pick, reorder, recipients)
 │   ├── config.py              # loads and validates schedules.yaml
@@ -291,7 +332,7 @@ See [DEPLOY_RENDER.md](DEPLOY_RENDER.md). In short:
 - It needs a paid plan (about $7/month) plus a 1 GB persistent disk. Free Render services sleep after 15 minutes and lose their files on restart.
 - Every push to `main` redeploys it. Making that wait for the GitHub Actions tests is optional (`autoDeployTrigger: checksPass`).
 - `SENDER` starts as `dry_run`. Switch it in the Render dashboard only after dry-run works.
-- On a cloud host, prefer the Telegram route. Instagram logins from cloud IPs trigger more blocks.
+- On a cloud host, Instagram logins come from a cloud IP and get more security checks, so keep the session file on the disk and set `IG_TOTP_SECRET`. Telegram stays optional, for alerts. See [DEPLOY_RENDER.md](DEPLOY_RENDER.md).
 
 ## Documentation
 
@@ -368,7 +409,7 @@ ReelDrop can find reels by itself instead of you pasting links. You list sources
 **Requirements.** Discovery reads Instagram through `instagrapi`, so it needs `IG_USERNAME` / `IG_PASSWORD` in `.env`. Two setups work:
 
 - `SENDER=instagrapi` (Route B): one login is used for both discovery and sending.
-- `SENDER=telegram`: discovery logs in separately, read-only, and reels are delivered over Telegram.
+- `SENDER=telegram` (optional): discovery logs in separately, read-only, and reels are delivered over Telegram.
 
 The official API (`SENDER=official`) cannot browse reels, so it cannot be used for discovery.
 

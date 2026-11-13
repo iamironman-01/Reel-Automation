@@ -2,7 +2,15 @@ import argparse
 import sys
 
 from .db import init_db
-from .queue import MOVE_DIRECTIONS, add_reel, delete_reel, list_reels, move_reel
+from .queue import MOVE_DIRECTIONS, REEL_RE, add_reel, delete_reel, list_reels, move_reel
+
+
+def parse_reel_url(url: str) -> str:
+    """Return the canonical reel URL, or raise ValueError. Does not touch the database."""
+    m = REEL_RE.match(url.strip()) if isinstance(url, str) else None
+    if not m:
+        raise ValueError("Not an Instagram reel/post link")
+    return f"https://www.instagram.com/reel/{m.group(1)}/"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,7 +40,19 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("--limit", type=int, default=None, help="max reels to add this run")
     dc.add_argument("--sources", action="store_true",
                     help="print the configured sources and settings, then exit (no login)")
+    ig = sub.add_parser("instagram-check",
+                        help="log in to Instagram and optionally send a test DM "
+                             "(sends nothing unless --send-test-text or --reel is given)")
+    ig.add_argument("--to", metavar="USERNAME", default=None,
+                    help="Instagram username to look up / send to (a friend or your second account)")
+    ig.add_argument("--send-test-text", action="store_true",
+                    help="send the text 'ReelDrop test message' to --to")
+    ig.add_argument("--reel", metavar="URL", default=None,
+                    help="send this reel to --to as a real DM and report which path was used")
     args = p.parse_args(argv)
+
+    if args.cmd == "instagram-check" and (args.send_test_text or args.reel) and not args.to:
+        p.error("--send-test-text and --reel require --to USERNAME")
 
     init_db()
 
@@ -77,6 +97,57 @@ def main(argv: list[str] | None = None) -> int:
         print(format_result(result))
     elif args.cmd == "discover":
         return _discover(args)
+    elif args.cmd == "instagram-check":
+        return _instagram_check(args)
+    return 0
+
+
+TEST_TEXT = "ReelDrop test message"
+
+
+def _instagram_check(args) -> int:
+    """The `instagram-check` command. Sends only when a send flag is given."""
+    import importlib
+
+    from .senders.base import BlockedError
+
+    reel_url = None
+    if args.reel:
+        try:
+            reel_url = parse_reel_url(args.reel)  # before logging in
+        except ValueError as e:
+            print("Error:", e)
+            return 1
+    to = args.to.strip().lstrip("@") if args.to else None
+
+    try:
+        module = importlib.import_module("reeldrop.senders.instagrapi_sender")
+        sender = module.InstagrapiSender()
+        print(f"Logged in as @{sender.username}")
+        if to:
+            print(f"Found @{to} (id {sender.resolve_user(to)})")
+        if args.send_test_text:
+            sender.send_text(to, TEST_TEXT)
+            print(f"Test message sent to @{to}")
+        if reel_url:
+            sender.send(to, reel_url)
+            if sender.last_method == "native":
+                print(f"Reel sent to @{to} as a native Instagram reel share")
+            else:
+                print(f"Reel sent to @{to} as a LINK (native share failed; check the log)")
+    except BlockedError as e:
+        # Pause so the scheduler does not keep hitting an account Instagram flagged.
+        from .settings import set_paused
+        set_paused(True)
+        print(f"Error: Instagram blocked or challenged the account ({e}). "
+              "Sending is now paused; clear the warning in the app first.")
+        return 1
+    except (ValueError, RuntimeError, ImportError) as e:
+        print("Error:", e)
+        return 1
+    if to:
+        print("Note: if the friend does not follow the sending account, the DM may "
+              "appear under Message requests.")
     return 0
 
 

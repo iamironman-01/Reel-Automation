@@ -754,6 +754,7 @@ def make_ig(load_fresh, monkeypatch, tmp_path):
             self.calls.append(("direct_send", text, user_ids))
             if self.send_error:
                 raise self.send_error
+            return types.SimpleNamespace(id="m1", thread_id="t1")   # a delivered message
 
     pkg = types.ModuleType("instagrapi")
     pkg.__path__ = []
