@@ -43,9 +43,13 @@ def parse_links(text: str) -> list[str]:
 
 
 def add_links(
-    text: str, note: str, add_fn: Callable[[str, str], object]
+    text: str,
+    note: str,
+    add_fn: Callable[..., object],
+    recipient: str | None = None,
 ) -> tuple[int, list[str]]:
-    """Add each pasted link with add_fn(url, note).
+    """Add each pasted link with add_fn(url, note), or add_fn(url, note,
+    recipient=...) when a non-blank recipient is given.
 
     Returns (added_count, per_line_errors). A ValueError from add_fn is a
     per-line error; any other exception is reported for that line too so one
@@ -54,9 +58,13 @@ def add_links(
     added = 0
     errors: list[str] = []
     note = (note or "").strip()
+    recipient = (recipient or "").strip()
     for url in parse_links(text):
         try:
-            add_fn(url, note)
+            if recipient:
+                add_fn(url, note, recipient=recipient)
+            else:
+                add_fn(url, note)
             added += 1
         except ValueError as e:
             errors.append(f"{url} — {e}")
@@ -71,12 +79,35 @@ def queue_query(status: str) -> tuple[str, tuple]:
     """Return (sql, params) for the queue table. Status is whitelisted."""
     if status not in STATUS_FILTERS:
         raise ValueError(f"Unknown status filter: {status!r}")
-    sql = "SELECT id, url, note, status, added_at FROM reels"
+    sql = "SELECT id, url, note, status, recipient, position, added_at FROM reels"
     params: tuple = ()
     if status != "all":
         sql += " WHERE status = ?"
         params = (status,)
+    if status == "pending":
+        # the order reels will be sent in, so Up/Down matches what is shown
+        return sql + " ORDER BY COALESCE(position, id), id", params
     return sql + " ORDER BY id DESC", params
+
+
+def pending_ids(rows) -> list[int]:
+    """Ids of the pending reels in rows (dicts with "id" and "status"), in order."""
+    return [int(r["id"]) for r in rows if r["status"] == "pending"]
+
+
+def move_message(reel_id: int, direction: str, moved: bool) -> str:
+    """Flash/warning text for a Queue-tab move button press."""
+    if moved:
+        return f"Moved reel #{reel_id} {direction}"
+    return f"Reel #{reel_id} was not moved: it is not pending or already at that end"
+
+
+def recipient_message(reel_id: int, recipient: str | None, found: bool) -> str:
+    """Flash/warning text after assigning a recipient on the Queue tab."""
+    if not found:
+        return f"No reel with id {reel_id}"
+    who = (recipient or "").strip()
+    return f"Reel #{reel_id} now goes to {who}" if who else f"Reel #{reel_id} is now unassigned (any rule)"
 
 
 # --- stats -----------------------------------------------------------------

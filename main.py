@@ -172,6 +172,10 @@ def main():
     )
     if not cfg.rules:
         log.warning("No rules in config/schedules.yaml — nothing will be scheduled")
+    if os.getenv("TELEGRAM_CONTROL", "0") == "1":
+        # Opt-in: lets you run /add /pause /resume /status from your phone.
+        from reeldrop.telegram_control import start_in_thread
+        start_in_thread()
     log.info("Sender: %s. Waiting… (Ctrl+C to stop)", sender.name)
     try:
         sched.start()

@@ -14,7 +14,15 @@ REEL_RE = re.compile(
 )
 
 
-def add_reel(url: str, note: str = "") -> int:
+def _clean_recipient(recipient: str | None) -> str | None:
+    """Strip a recipient; blank or None means unassigned (None)."""
+    if recipient is None:
+        return None
+    return str(recipient).strip() or None
+
+
+def add_reel(url: str, note: str = "", recipient: str | None = None) -> int:
+    """Add a reel to the end of the queue. recipient=None leaves it unassigned."""
     m = REEL_RE.match(url.strip()) if isinstance(url, str) else None
     if not m:
         raise ValueError("Not an Instagram reel/post link")
@@ -22,9 +30,11 @@ def add_reel(url: str, note: str = "") -> int:
     clean_url = f"https://www.instagram.com/reel/{shortcode}/"
     try:
         with connect() as c:
+            # position is computed inside the INSERT, so it is atomic with it
             cur = c.execute(
-                "INSERT INTO reels (url, shortcode, note, added_at) VALUES (?, ?, ?, ?)",
-                (clean_url, shortcode, note, now()),
+                "INSERT INTO reels (url, shortcode, note, added_at, recipient, position) "
+                "VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM reels))",
+                (clean_url, shortcode, note, now(), _clean_recipient(recipient)),
             )
             return cur.lastrowid
     except sqlite3.IntegrityError:
@@ -32,7 +42,13 @@ def add_reel(url: str, note: str = "") -> int:
 
 
 def list_reels(status: str | None = None):
+    """All reels (or one status) by id; pending reels are listed in queue order."""
     with connect() as c:
+        if status == "pending":
+            return c.execute(
+                "SELECT * FROM reels WHERE status='pending' "
+                "ORDER BY COALESCE(position, id), id"
+            ).fetchall()
         if status:
             return c.execute(
                 "SELECT * FROM reels WHERE status=? ORDER BY id", (status,)
@@ -43,21 +59,103 @@ def list_reels(status: str | None = None):
 PICK_ORDERS = ("oldest", "random")
 
 
-def next_pending(n: int, order: str = "oldest"):
-    """Return up to n pending reels, sorted by id.
+def next_pending(n: int, order: str = "oldest", recipient: str | None = None):
+    """Return up to n pending reels.
 
-    order="oldest" takes the n lowest ids; order="random" takes n random pending reels.
+    order="oldest" takes the first n in queue order (position, then id) and returns
+    them in that order; order="random" takes n random pending reels and returns them
+    sorted by id.
+
+    recipient=None considers every pending reel. With a recipient, only reels
+    assigned to that recipient (case-insensitive) or unassigned (NULL) are
+    considered, so a reel assigned to one friend is never returned for another.
     """
-    if order == "oldest":
-        sql = "SELECT * FROM reels WHERE status='pending' ORDER BY id LIMIT ?"
-    elif order == "random":
-        # pick at random, then return the picked rows in a stable (id) order
-        sql = ("SELECT * FROM (SELECT * FROM reels WHERE status='pending' "
-               "ORDER BY RANDOM() LIMIT ?) ORDER BY id")
-    else:
+    if order not in PICK_ORDERS:
         raise ValueError(f"order must be one of {', '.join(PICK_ORDERS)}, got {order!r}")
+    where = "status='pending'"
+    params: list = []
+    if recipient is not None:
+        where += " AND (recipient IS NULL OR recipient = ? COLLATE NOCASE)"
+        params.append(recipient.strip())
+    if order == "oldest":
+        sql = f"SELECT * FROM reels WHERE {where} ORDER BY COALESCE(position, id), id LIMIT ?"
+    else:
+        # pick at random, then return the picked rows in a stable (id) order
+        sql = (f"SELECT * FROM (SELECT * FROM reels WHERE {where} "
+               "ORDER BY RANDOM() LIMIT ?) ORDER BY id")
+    params.append(n)
     with connect() as c:
-        return c.execute(sql, (n,)).fetchall()
+        return c.execute(sql, params).fetchall()
+
+
+def set_recipient(reel_id: int, recipient: str | None) -> bool:
+    """Assign a reel to a recipient (None or blank = unassigned).
+
+    Returns True if the reel exists, False otherwise.
+    """
+    with connect() as c:
+        cur = c.execute(
+            "UPDATE reels SET recipient=? WHERE id=?", (_clean_recipient(recipient), reel_id)
+        )
+        return cur.rowcount > 0
+
+
+MOVE_DIRECTIONS = ("up", "down", "top", "bottom")
+
+
+def reorder_ids(ids: list, reel_id, direction: str) -> list:
+    """Pure helper: return ids (in queue order) with reel_id moved per direction.
+
+    Returns the list unchanged if reel_id is absent or already at that edge.
+    """
+    if direction not in MOVE_DIRECTIONS:
+        raise ValueError(f"direction must be one of {', '.join(MOVE_DIRECTIONS)}, got {direction!r}")
+    if reel_id not in ids:
+        return list(ids)
+    i = ids.index(reel_id)
+    out = list(ids)
+    out.pop(i)
+    if direction == "up":
+        j = max(i - 1, 0)
+    elif direction == "down":
+        j = min(i + 1, len(ids) - 1)
+    elif direction == "top":
+        j = 0
+    else:
+        j = len(ids) - 1
+    out.insert(j, reel_id)
+    return out
+
+
+def move_reel(reel_id: int, direction: str) -> bool:
+    """Move a pending reel within the pending queue.
+
+    direction is "up", "down", "top" or "bottom". Only pending reels take part;
+    sent/failed reels keep their positions. Returns False if the reel is not
+    pending (or missing) or already at that edge. Runs in one transaction and
+    keeps positions unique: the pending reels reuse the same set of position
+    values, in the new order.
+    """
+    if direction not in MOVE_DIRECTIONS:
+        raise ValueError(f"direction must be one of {', '.join(MOVE_DIRECTIONS)}, got {direction!r}")
+    with connect() as c:
+        c.execute("BEGIN IMMEDIATE")   # take the write lock before reading the order
+        rows = c.execute(
+            "SELECT id, COALESCE(position, id) AS pos FROM reels WHERE status='pending' "
+            "ORDER BY COALESCE(position, id), id"
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        new_ids = reorder_ids(ids, reel_id, direction)
+        if new_ids == ids:
+            return False
+        slots = sorted(r["pos"] for r in rows)
+        if len(set(slots)) != len(slots):   # damaged data: renumber after the current max
+            top = c.execute("SELECT COALESCE(MAX(position), 0) FROM reels").fetchone()[0]
+            slots = list(range(top + 1, top + 1 + len(ids)))
+        c.executemany(
+            "UPDATE reels SET position=? WHERE id=?", list(zip(slots, new_ids))
+        )
+        return True
 
 
 def _log(c, reel_id, recipient, rule_name, sender_type, status, error=None):

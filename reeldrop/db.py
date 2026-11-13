@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS reels (
     shortcode TEXT NOT NULL UNIQUE,
     note      TEXT DEFAULT '',
     status    TEXT NOT NULL DEFAULT 'pending',   -- pending | sent | failed
-    added_at  TEXT NOT NULL
+    added_at  TEXT NOT NULL,
+    position  INTEGER,                           -- queue order (lower is sent first)
+    recipient TEXT                               -- NULL = unassigned (any rule may send it)
 );
 CREATE TABLE IF NOT EXISTS send_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,9 +68,31 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+def _migrate(c: sqlite3.Connection) -> None:
+    """Upgrade a database created by an older schema, in place and idempotently.
+
+    Adds reels.recipient and reels.position when missing, gives rows without a
+    position position = id, and creates the (status, position) index. Safe to run
+    on every start and on fresh databases (where it does nothing).
+    """
+    cols = {row["name"] for row in c.execute("PRAGMA table_info(reels)")}
+    for name, ddl in (("recipient", "TEXT"), ("position", "INTEGER")):
+        if name not in cols:
+            try:
+                c.execute(f"ALTER TABLE reels ADD COLUMN {name} {ddl}")
+            except sqlite3.OperationalError as e:
+                # another process (scheduler vs dashboard) migrated first
+                if "duplicate column" not in str(e).lower():
+                    raise
+    c.execute("UPDATE reels SET position = id WHERE position IS NULL")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_reels_status_position ON reels (status, position)")
+    c.commit()
+
+
 def init_db() -> None:
     with connect() as c:
         # WAL lets the dashboard read while the scheduler writes. The mode is
         # stored in the database file, so setting it once here is enough.
         c.execute("PRAGMA journal_mode = WAL")
         c.executescript(SCHEMA)
+        _migrate(c)

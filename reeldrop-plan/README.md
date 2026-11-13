@@ -25,14 +25,16 @@ Read the files **in order**. Each phase ends with something that works on its ow
 
 ## Progress tracker
 
-- [x] Phase 0 — Setup
+Legend: `[x]` built and verified in the build sandbox · `[~]` code complete, but the "Done when" check needs a real environment (listed after each item).
+
+- [~] Phase 0 — Setup — scaffold done; you still need a test account, your friend's consent, and `pip install -r requirements.txt` on a machine with internet
 - [x] Phase 1 — Reel queue
-- [x] Phase 2 — Scheduler (dry-run)
-- [x] Phase 3 — Real sender
-- [x] Phase 4 — Reliability & safety
-- [x] Phase 5 — Dashboard
-- [x] Phase 6 — Deployment
-- [x] Phase 7 — Extensions
+- [~] Phase 2 — Scheduler (dry-run) — logic tested; run `python main.py` with a rule 2 minutes ahead to confirm real APScheduler timing
+- [~] Phase 3 — Real sender — senders tested with fakes only; no real Instagram, Meta or Telegram message sent yet
+- [x] Phase 4 — Reliability & safety — retry, no-duplicate and block-pause behaviour covered by tests
+- [~] Phase 5 — Dashboard — compiled and helper-tested; the Streamlit UI has not been run
+- [~] Phase 6 — Deployment — files written; Docker build and the 7-day / reboot check not run
+- [x] Phase 7 — Extensions — all 9 ideas built (tested with fakes; auto-import and Telegram control not run against the live services)
 
 ## Timeline
 

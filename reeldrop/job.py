@@ -66,7 +66,9 @@ def _run_rule(rule, cfg, sender):
     if remaining <= 0:
         log.info("[%s] daily cap reached", rule.name)
         return
-    reels = next_pending(min(rule.count, remaining), order=rule.pick)
+    reels = next_pending(
+        min(rule.count, remaining), order=rule.pick, recipient=rule.recipient
+    )
     if not reels:
         notify_me(f"ReelDrop: queue is empty for {rule.name} — add more reels")
         return

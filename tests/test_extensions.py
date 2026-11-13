@@ -263,7 +263,7 @@ def test_sender_without_send_text_fails_reel_cleanly(env):
 
 def test_random_pick_passed_to_queue(env, monkeypatch):
     seen = []
-    monkeypatch.setattr(job, "next_pending", lambda n, order="oldest": seen.append((n, order)) or [])
+    monkeypatch.setattr(job, "next_pending", lambda n, order="oldest", recipient=None: seen.append((n, order)) or [])
     job.run_rule(rule(pick="random", count=3), cfg(), NoteSender())
     job.run_rule(rule(count=3), cfg(), NoteSender())
     assert seen == [(3, "random"), (3, "oldest")]

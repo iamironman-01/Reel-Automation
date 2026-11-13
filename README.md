@@ -71,9 +71,11 @@ Only switch `SENDER` in `.env` to a real route after dry-run works, and start wi
 ## CLI usage
 
 ```bash
-python -m reeldrop add "<reel url>" [--note "text"]   # add to the queue
+python -m reeldrop add "<reel url>" [--note "text"] [--to USERNAME]   # --to: only that friend's rule sends it
 python -m reeldrop list [--status pending|sent|failed]
 python -m reeldrop remove <id>
+python -m reeldrop move <id> {up,down,top,bottom}                     # reorder a pending reel
+python -m reeldrop import-collection "<name>" [--limit N] [--dry-run]  # needs instagrapi credentials
 ```
 
 `add` rejects links that are not Instagram reel/post links, and reels already in the queue. Tracking parameters are stripped, so the same reel with a different `?igsh=` counts as a duplicate.
@@ -90,6 +92,7 @@ python -m reeldrop remove <id>
 | `IG_ACCESS_TOKEN`, `IG_RECIPIENT_IGSID` | Route A |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_FRIEND_CHAT_ID` | Route D |
 | `TELEGRAM_MY_CHAT_ID` | Optional alerts to yourself (pause, empty queue, results) |
+| `TELEGRAM_CONTROL` | `1` to let your bot accept `/add`, `/pause`, `/status` from `TELEGRAM_MY_CHAT_ID` (see Extensions) |
 | `DASHBOARD_PASSWORD` | Dashboard password. Change the default `change-me` |
 
 ### `config/schedules.yaml`
@@ -211,9 +214,11 @@ reeldrop/
 ├── data/                      # created at runtime (db, session, logs); not committed
 ├── reeldrop/
 │   ├── __init__.py
-│   ├── __main__.py            # CLI: add / list / remove
-│   ├── db.py                  # connection + schema
+│   ├── __main__.py            # CLI: add / list / remove / move / import-collection
+│   ├── db.py                  # connection + schema + in-place migration
 │   ├── queue.py               # queue functions
+│   ├── importer.py            # import reels from a saved collection
+│   ├── telegram_control.py    # /add /pause /status from your phone
 │   ├── settings.py            # pause switch
 │   ├── config.py              # loads schedules.yaml
 │   ├── job.py                 # what runs when a rule fires
@@ -248,7 +253,7 @@ The full build plan, one phase per file, is in [reeldrop-plan/](reeldrop-plan/RE
 
 ## Extensions
 
-Five optional extensions are implemented. All are off by default: with the shipped `config/schedules.yaml` and no new fields, ReelDrop behaves as before. The idea list is in [reeldrop-plan/09-phase-7-extensions.md](reeldrop-plan/09-phase-7-extensions.md).
+Nine optional extensions are implemented. All are off by default or have no effect until you use them: with the shipped `config/schedules.yaml` and no new fields, ReelDrop behaves as before. The idea list is in [reeldrop-plan/09-phase-7-extensions.md](reeldrop-plan/09-phase-7-extensions.md).
 
 ```yaml
 timezone: Asia/Kolkata
@@ -294,6 +299,22 @@ The scheduler checks `config/schedules.yaml` every 60 seconds. When the file cha
 
 The dashboard's **Stats** tab shows the all-time number sent and failed, the failure rate (`failed / (sent + failed)`), reels sent per day for the last 30 days, and per week (Monday to Sunday) for the last 12 weeks. Notes are not counted.
 
+### Multiple friends
+
+Each reel can have a recipient. Add one with `python -m reeldrop add URL --to alice`, with the "Send to" box on the dashboard's Add reels tab, or assign one later from the Queue tab. A rule only sends reels assigned to its `recipient` plus unassigned reels. A reel assigned to one friend is never sent to another. Matching ignores case. `list` shows the recipient column (`-` means any rule can send it). Existing databases are upgraded automatically on startup, with no data loss.
+
+### Queue order
+
+Pending reels are sent in queue order, which is the order they were added unless you change it. Reorder with `python -m reeldrop move ID up|down|top|bottom` or the Up/Down/Top/Bottom buttons in the Queue tab. Only pending reels can be moved. `pick: random` ignores queue order.
+
+### Auto-import from a saved collection
+
+`python -m reeldrop import-collection "Funny" --limit 20` logs in with `IG_USERNAME` / `IG_PASSWORD` (Route B credentials, same session file) and adds the reels in your saved collection with that name. Photos and albums are skipped, reels already queued count as duplicates, and `--dry-run` lists what would be added. This uses the same unofficial API as Route B, so the same Terms-of-Service risk applies. If Instagram blocks or challenges the account, the import stops and sending is paused.
+
+### Telegram control
+
+Set `TELEGRAM_CONTROL=1` in `.env` (plus `TELEGRAM_BOT_TOKEN` and `TELEGRAM_MY_CHAT_ID`) and the scheduler also listens to your bot. Commands: `/add <link> [note]` (or just paste a reel link), `/pause`, `/resume`, `/status`, `/queue`, `/help`. Only messages from `TELEGRAM_MY_CHAT_ID` are accepted; everything else is ignored. The bot uses long polling, so it needs no open port.
+
 ### Not implemented
 
-Multiple friends, auto-import from a saved collection, queue reordering and Telegram bot control are still ideas only.
+Route C (browser automation) is not covered. Telegram control and auto-import were tested with fakes only, not against the live services.

@@ -370,3 +370,23 @@ def test_main_uses_sender_env_default_dry_run(main_mod, monkeypatch):
     _patch_main(main_mod, monkeypatch, Config(), lambda name: seen.append(name) or FakeSender())
     main_mod.main()
     assert seen == ["dry_run"] and FakeScheduler.instances[0].started
+
+
+def test_main_starts_telegram_control_only_when_enabled(main_mod, monkeypatch):
+    started = []
+    fake = types.ModuleType("reeldrop.telegram_control")
+    fake.start_in_thread = lambda *a, **k: started.append(1)
+    monkeypatch.setitem(sys.modules, "reeldrop.telegram_control", fake)
+
+    monkeypatch.delenv("TELEGRAM_CONTROL", raising=False)
+    _patch_main(main_mod, monkeypatch, Config(), lambda name: FakeSender())
+    main_mod.main()
+    assert started == []                          # off by default
+
+    monkeypatch.setenv("TELEGRAM_CONTROL", "0")
+    main_mod.main()
+    assert started == []
+
+    monkeypatch.setenv("TELEGRAM_CONTROL", "1")
+    main_mod.main()
+    assert started == [1]

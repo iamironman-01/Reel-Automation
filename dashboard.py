@@ -13,14 +13,24 @@ from reeldrop.dashboard_helpers import (
     add_links,
     daily_counts,
     failure_rate,
+    move_message,
     password_config_error,
     password_matches,
+    pending_ids,
     queue_query,
+    recipient_message,
     save_schedules,
     weekly_counts,
 )
 from reeldrop.db import connect, init_db
-from reeldrop.queue import add_reel, delete_reel, sent_today
+from reeldrop.queue import (
+    MOVE_DIRECTIONS,
+    add_reel,
+    delete_reel,
+    move_reel,
+    sent_today,
+    set_recipient,
+)
 from reeldrop.settings import is_paused, set_paused
 
 CONFIG_PATH = "config/schedules.yaml"
@@ -91,11 +101,16 @@ with t_add:
         "Note (optional, applied to every link added)",
         help="Sent as a message before the reel by rules with send_note: true.",
     )
+    to = st.text_input(
+        "Send to (optional)",
+        help="Only the rule with this recipient will send these reels. "
+        "Leave blank and any rule can send them.",
+    )
     if st.button("Add to queue"):
         if not text.strip():
             st.warning("Paste at least one link.")
         else:
-            added, errors = add_links(text, note, add_reel)
+            added, errors = add_links(text, note, add_reel, recipient=to)
             if added:
                 st.success(f"Added {added} reel(s)")
             elif errors:
@@ -131,6 +146,48 @@ with t_queue:
                 else:
                     st.session_state["flash"] = f"Removed reel #{rid}"
                     st.rerun()
+
+            st.divider()
+            st.subheader("Send to")
+            r_id = st.selectbox("Reel to assign", df["id"].tolist(), key="assign_id")
+            new_to = st.text_input(
+                "Recipient (blank = unassigned, any rule can send it)", key="assign_to"
+            )
+            if st.button("Set recipient"):
+                try:
+                    found = set_recipient(int(r_id), new_to)
+                except sqlite3.Error as e:
+                    st.error(f"Could not update reel #{r_id}: {e}")
+                else:
+                    if found:
+                        st.session_state["flash"] = recipient_message(int(r_id), new_to, True)
+                        st.rerun()
+                    st.warning(recipient_message(int(r_id), new_to, False))
+
+            st.divider()
+            st.subheader("Reorder")
+            movable = pending_ids(df.to_dict("records"))
+            if not movable:
+                st.caption("Only pending reels can be reordered.")
+            else:
+                m_id = st.selectbox(
+                    "Pending reel to move",
+                    movable,
+                    key="move_id",
+                    format_func=lambda i: f"#{i} · {df.loc[df['id'] == i, 'url'].iloc[0]}",
+                )
+                labels = {"up": "⬆ Up", "down": "⬇ Down", "top": "⏫ Top", "bottom": "⏬ Bottom"}
+                for col, direction in zip(st.columns(len(MOVE_DIRECTIONS)), MOVE_DIRECTIONS):
+                    if col.button(labels[direction], key=f"move_{direction}"):
+                        try:
+                            moved = move_reel(int(m_id), direction)
+                        except sqlite3.Error as e:
+                            st.error(f"Could not move reel #{m_id}: {e}")
+                        else:
+                            if moved:
+                                st.session_state["flash"] = move_message(int(m_id), direction, True)
+                                st.rerun()
+                            st.warning(move_message(int(m_id), direction, False))
 
 # --- History ---
 with t_hist:
