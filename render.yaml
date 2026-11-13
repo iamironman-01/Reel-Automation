@@ -1,0 +1,57 @@
+# Render Blueprint: one always-on web service (dashboard + scheduler) with a persistent disk.
+#
+# Why a paid plan: free web services spin down after 15 minutes without traffic and have
+# no persistent disk, so the scheduler would sleep and the database would reset on every
+# restart. "starter" is the cheapest plan that supports a disk and never sleeps.
+#
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repo. Then fill in the
+# variables marked "sync: false" (secrets are never stored in this file).
+# Redeploys: Render's GitHub connection redeploys automatically on every push to `branch`
+# once the GitHub Actions checks pass (autoDeployTrigger: checksPass).
+services:
+  - type: web
+    name: reeldrop
+    runtime: docker
+    dockerfilePath: ./Dockerfile.render
+    dockerContext: .
+    plan: starter
+    region: singapore            # closest Render region to India
+    branch: main
+    autoDeployTrigger: checksPass
+    healthCheckPath: /_stcore/health
+    disk:
+      name: reeldrop-data
+      mountPath: /app/data       # database, session.json, logs, schedules.yaml
+      sizeGB: 1
+    envVars:
+      # Safe default: prints instead of sending. Change to telegram / instagrapi / official
+      # in the Render dashboard only after dry-run works.
+      - key: SENDER
+        value: dry_run
+      - key: TZ_NAME
+        value: Asia/Kolkata
+      - key: SCHEDULES_PATH
+        value: /app/data/schedules.yaml
+      - key: SHUTDOWN_GRACE_SECONDS
+        value: "240"
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      # Route D (Telegram) - recommended on a cloud host
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_FRIEND_CHAT_ID
+        sync: false
+      - key: TELEGRAM_MY_CHAT_ID
+        sync: false
+      - key: TELEGRAM_CONTROL
+        value: "0"
+      # Route B (instagrapi) - cloud IPs trigger more Instagram security checks
+      - key: IG_USERNAME
+        sync: false
+      - key: IG_PASSWORD
+        sync: false
+      # Route A (official API)
+      - key: IG_ACCESS_TOKEN
+        sync: false
+      - key: IG_RECIPIENT_IGSID
+        sync: false

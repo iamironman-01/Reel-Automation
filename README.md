@@ -247,6 +247,10 @@ reeldrop/
 └── docker-compose.yml
 ```
 
+## Deploy on Render
+
+See [DEPLOY_RENDER.md](DEPLOY_RENDER.md): one always-on web service with a persistent disk, defined in `render.yaml`, redeployed automatically from GitHub after CI passes.
+
 ## Documentation
 
 The full build plan, one phase per file, is in [reeldrop-plan/](reeldrop-plan/README.md): overview and route comparison, architecture, setup, queue, scheduler, sender, reliability, dashboard, deployment, extensions, testing plan, and risks.

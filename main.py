@@ -11,7 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 load_dotenv()   # must run before the reeldrop imports below read the environment
 
-from reeldrop.config import RELOAD_JOB_ID, load_config
+from reeldrop.config import RELOAD_JOB_ID, ensure_schedules_file, load_config, schedules_path
 from reeldrop.db import init_db
 from reeldrop.job import run_rule
 from reeldrop.notify import notify_me
@@ -19,7 +19,7 @@ from reeldrop.senders import get_sender
 
 log = logging.getLogger("reeldrop")
 
-CONFIG_PATH = "config/schedules.yaml"
+CONFIG_PATH = schedules_path()   # SCHEDULES_PATH env, default config/schedules.yaml
 RELOAD_INTERVAL_SECONDS = 60
 
 
@@ -142,6 +142,11 @@ def reload_if_changed(sched, state, path, sender, loader=None):
 def main():
     setup_logging()
     init_db()
+    try:
+        ensure_schedules_file()       # first start on a fresh disk: seed from the shipped default
+    except OSError as e:
+        log.error("Cannot prepare %s: %s", CONFIG_PATH, e)
+        sys.exit(1)
     mtime = file_mtime(CONFIG_PATH)   # read before loading so an edit in between is not missed
     try:
         cfg = load_config()
@@ -171,7 +176,7 @@ def main():
         max_instances=1,
     )
     if not cfg.rules:
-        log.warning("No rules in config/schedules.yaml — nothing will be scheduled")
+        log.warning("No rules in %s — nothing will be scheduled", CONFIG_PATH)
     if os.getenv("TELEGRAM_CONTROL", "0") == "1":
         # Opt-in: lets you run /add /pause /resume /status from your phone.
         from reeldrop.telegram_control import start_in_thread
