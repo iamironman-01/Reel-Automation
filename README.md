@@ -1,16 +1,48 @@
 # ReelDrop
 
-ReelDrop keeps a queue of Instagram reel links and sends them to a friend as direct messages on a schedule you define.
+ReelDrop sends Instagram reels to a friend **automatically**, on a schedule you define, without you touching your phone.
 
 > Example: "Every day at 8:00 PM, send 3 reels to my friend. On weekends at 11:00 AM, send 5."
 
-It has five parts:
+You do not have to paste links. With **automatic discovery** you list sources (hashtags, creators, or a saved collection) and ReelDrop finds the reels itself, keeps a queue stocked, and sends them as real Instagram DMs. You can still add links by hand.
 
-- **Reel queue**: reel links stored in SQLite, oldest first.
+```
+sources (hashtags / creators / collections)      pasted links (optional)
+              │                                          │
+              └────────────► reel queue (SQLite) ◄───────┘
+                                    │
+        schedule rules ──► scheduler fires at 20:00, picks the next N
+                                    │
+                         sender ──► your friend
+                    (dry run / Instagram / Telegram)
+```
+
+It has these parts:
+
+- **Reel queue**: reels stored in SQLite, oldest first (or random, or reordered by you).
+- **Automatic discovery**: finds reels from your sources and tops the queue up. Off by default.
 - **Schedule rules**: time, days, number of reels and recipient, written in `config/schedules.yaml`.
 - **Scheduler**: at each rule's time it sends the next N pending reels (APScheduler 3.x).
 - **Pluggable senders**: dry-run, `instagrapi`, official API, Telegram. The queue, scheduler and dashboard do not depend on which one is used.
-- **Dashboard**: a Streamlit page to add reels, view the queue and history, edit schedules, and pause sending.
+- **Dashboard**: a Streamlit page to see the queue, history and discovery status, edit schedules, and pause sending.
+
+## Status
+
+- **Built and tested with fakes:** every part above. 580 automated tests pass (6 are skipped when PyYAML is not installed; they run in CI).
+- **Not yet verified against the real services:** Instagram login, discovery and sending, Telegram, the Meta API, the Streamlit UI, real APScheduler timing, and the Docker and Render deployments. The first run on a test account is the real test.
+- **Safe by default:** the default sender is `dry_run`, which sends nothing, and discovery is off until you enable it.
+
+## Ways to run it
+
+| Where | Guide |
+|-------|-------|
+| Your own computer (start here) | [LOCAL_RUN.md](LOCAL_RUN.md): one-command setup and a 2-minute dry-run demo |
+| Docker on a home server or Raspberry Pi | [Docker](#docker-run-247) below |
+| Render, 24/7 in the cloud | [DEPLOY_RENDER.md](DEPLOY_RENDER.md) |
+
+## Branches
+
+`main` is the current code and the only branch to use. `local-run`, `auto-discovery`, `render-deployment` and `feature/reeldrop-implementation` are older work branches that have already been merged into `main`. They are kept for history, and their README is kept the same as `main`.
 
 ## Golden rules
 
@@ -35,7 +67,14 @@ Instagram has no open, official way for a personal account to DM a friend from c
 
 ## Quickstart
 
-Requires Python 3.11 or newer.
+Requires Python 3.11 or newer. The quickest route is the helper script, which also creates `.env` with `SENDER=dry_run` and a random dashboard password, then runs a demo:
+
+```bash
+bash scripts/setup_local.sh        # Windows: scripts\setup_local.bat
+bash scripts/run_local.sh demo     # Windows: scripts\run_local.bat demo
+```
+
+Or set it up by hand:
 
 ```bash
 python -m venv .venv
@@ -45,7 +84,9 @@ pip install -r requirements.txt
 cp .env.example .env               # then edit .env; keep SENDER=dry_run for now
 ```
 
-Add some reels (see [CLI usage](#cli-usage)):
+To make it fully automatic (no pasted links), see [Automatic discovery](#automatic-discovery-no-pasted-links).
+
+Or add some reels by hand (see [CLI usage](#cli-usage)):
 
 ```bash
 python -m reeldrop add "https://www.instagram.com/reel/ABC123xyz/" --note "funny"
@@ -94,7 +135,8 @@ python -m reeldrop discover [--sources | --dry-run]                    # auto-di
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_FRIEND_CHAT_ID` | Route D |
 | `TELEGRAM_MY_CHAT_ID` | Optional alerts to yourself (pause, empty queue, results) |
 | `TELEGRAM_CONTROL` | `1` to let your bot accept `/add`, `/pause`, `/status` from `TELEGRAM_MY_CHAT_ID` (see Extensions) |
-| `DASHBOARD_PASSWORD` | Dashboard password. Change the default `change-me` |
+| `DASHBOARD_PASSWORD` | Dashboard password. The default `change-me` is refused |
+| `SCHEDULES_PATH` | Where the live schedule file is. Default `config/schedules.yaml`. Render sets it to the persistent disk |
 
 ### `config/schedules.yaml`
 
@@ -156,6 +198,8 @@ Tests use temporary databases and do not touch `data/`.
 
 ## Docker (run 24/7)
 
+This section is for your own machine. Render uses a different, single-container setup (see [Deploy on Render](#deploy-on-render)).
+
 `docker-compose.yml` defines two services that share `./data` and `./config`:
 
 - `scheduler`: runs `python main.py`.
@@ -209,49 +253,45 @@ The archive contains `session.json` and the database, so keep it private. To res
 ## Project layout
 
 ```
-reeldrop/
-├── config/
-│   └── schedules.yaml
-├── data/                      # created at runtime (db, session, logs); not committed
-├── reeldrop/
-│   ├── __init__.py
+Reel-Automation/
+├── reeldrop/                  # the Python package
 │   ├── __main__.py            # CLI: add / list / remove / move / import-collection / discover
-│   ├── db.py                  # connection + schema + in-place migration
-│   ├── queue.py               # queue functions
-│   ├── importer.py            # import reels from a saved collection
-│   ├── discovery.py           # find reels from hashtags / users / collections
-│   ├── telegram_control.py    # /add /pause /status from your phone
-│   ├── settings.py            # pause switch
-│   ├── config.py              # loads schedules.yaml
+│   ├── db.py                  # SQLite connection, schema, in-place migration
+│   ├── queue.py               # queue functions (add, pick, reorder, recipients)
+│   ├── config.py              # loads and validates schedules.yaml
 │   ├── job.py                 # what runs when a rule fires
+│   ├── discovery.py           # finds reels from hashtags / creators / collections
+│   ├── importer.py            # one-off import from a saved collection
+│   ├── telegram_control.py    # /add /pause /status from your phone
+│   ├── settings.py            # pause switch and flags
 │   ├── notify.py              # alerts to yourself
-│   └── senders/
-│       ├── __init__.py        # get_sender()
-│       ├── base.py
-│       ├── dry_run.py
-│       ├── instagrapi_sender.py
-│       ├── official_api_sender.py
-│       └── telegram_sender.py
-├── scripts/
-│   └── backup.sh              # tar data/ and config/ into a dated .tgz
-├── tests/
-├── reeldrop-plan/             # step-by-step phase documentation
+│   ├── dashboard_helpers.py   # logic behind the dashboard (unit-tested)
+│   └── senders/               # dry_run, instagrapi, official_api, telegram
 ├── main.py                    # starts the scheduler
 ├── dashboard.py               # Streamlit UI
-├── .env                       # secrets, never commit
-├── .env.example
-├── .gitignore
-├── .dockerignore
-├── pytest.ini
-├── requirements.txt
-├── requirements-dev.txt
-├── Dockerfile
-└── docker-compose.yml
+├── start.py                   # runs dashboard + scheduler together (used on Render)
+├── config/schedules.yaml      # your schedule rules and discovery sources
+├── scripts/                   # setup_local / run_local (.sh, .bat), local_demo.py, backup.sh
+├── tests/                     # automated tests
+├── reeldrop-plan/             # step-by-step phase documentation
+├── .github/workflows/ci.yml   # runs the tests on GitHub
+├── Dockerfile, docker-compose.yml, .dockerignore      # run on your own machine
+├── Dockerfile.render, docker/render-entrypoint.sh, render.yaml   # Render
+├── LOCAL_RUN.md, DEPLOY_RENDER.md
+├── .env.example               # copy to .env (secrets, never commit)
+├── requirements.txt, requirements-dev.txt, pytest.ini
+└── data/                      # created at runtime (db, session, logs); not committed
 ```
 
 ## Deploy on Render
 
-See [DEPLOY_RENDER.md](DEPLOY_RENDER.md): one always-on web service with a persistent disk, defined in `render.yaml`, redeployed automatically from GitHub after CI passes.
+See [DEPLOY_RENDER.md](DEPLOY_RENDER.md). In short:
+
+- One always-on web service runs the dashboard and the scheduler together (`start.py`), defined in `render.yaml` and `Dockerfile.render`.
+- It needs a paid plan (about $7/month) plus a 1 GB persistent disk. Free Render services sleep after 15 minutes and lose their files on restart.
+- Every push to `main` redeploys it. Making that wait for the GitHub Actions tests is optional (`autoDeployTrigger: checksPass`).
+- `SENDER` starts as `dry_run`. Switch it in the Render dashboard only after dry-run works.
+- On a cloud host, prefer the Telegram route. Instagram logins from cloud IPs trigger more blocks.
 
 ## Documentation
 
@@ -259,7 +299,7 @@ The full build plan, one phase per file, is in [reeldrop-plan/](reeldrop-plan/RE
 
 ## Extensions
 
-Nine optional extensions are implemented. All are off by default or have no effect until you use them: with the shipped `config/schedules.yaml` and no new fields, ReelDrop behaves as before. The idea list is in [reeldrop-plan/09-phase-7-extensions.md](reeldrop-plan/09-phase-7-extensions.md).
+Nine optional extensions are implemented (the first nine sections below), plus automatic discovery. All are off by default or have no effect until you use them: with the shipped `config/schedules.yaml` and no new fields, ReelDrop behaves as before. The idea list is in [reeldrop-plan/09-phase-7-extensions.md](reeldrop-plan/09-phase-7-extensions.md).
 
 ```yaml
 timezone: Asia/Kolkata
