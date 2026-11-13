@@ -1,0 +1,26 @@
+# Secrets and runtime state must never enter the image.
+.env
+**/session.json
+data/
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.log
+
+# VCS, virtualenv, caches
+.git
+.gitignore
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+
+# Not needed at runtime
+reeldrop-plan
+tests
+requirements-dev.txt
+pytest.ini
+scripts
+Dockerfile
+docker-compose.yml
+.dockerignore

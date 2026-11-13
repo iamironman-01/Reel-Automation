@@ -1,0 +1,17 @@
+timezone: Asia/Kolkata
+daily_cap: 10          # never send more than this per day
+gap_seconds: 45        # wait between two messages
+# quiet_days: ["2026-12-25"]   # optional: dates (YYYY-MM-DD) on which nothing is sent
+rules:
+  - name: evening_drop
+    days: "*"          # every day
+    time: "20:00"      # ALWAYS quote times - unquoted 20:00 can be read as a number
+    count: 3
+    recipient: friend_username
+    # send_note: true    # optional: send the reel's note as a message before the reel
+    # pick: random       # optional: "oldest" (default) or "random"
+  - name: weekend_binge
+    days: "sat,sun"
+    time: "11:00"
+    count: 5
+    recipient: friend_username

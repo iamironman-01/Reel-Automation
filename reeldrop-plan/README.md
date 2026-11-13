@@ -25,14 +25,14 @@ Read the files **in order**. Each phase ends with something that works on its ow
 
 ## Progress tracker
 
-- [ ] Phase 0 — Setup
-- [ ] Phase 1 — Reel queue
-- [ ] Phase 2 — Scheduler (dry-run)
-- [ ] Phase 3 — Real sender
-- [ ] Phase 4 — Reliability & safety
-- [ ] Phase 5 — Dashboard
-- [ ] Phase 6 — Deployment
-- [ ] Phase 7 — Extensions
+- [x] Phase 0 — Setup
+- [x] Phase 1 — Reel queue
+- [x] Phase 2 — Scheduler (dry-run)
+- [x] Phase 3 — Real sender
+- [x] Phase 4 — Reliability & safety
+- [x] Phase 5 — Dashboard
+- [x] Phase 6 — Deployment
+- [x] Phase 7 — Extensions
 
 ## Timeline
 

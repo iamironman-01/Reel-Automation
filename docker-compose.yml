@@ -1,0 +1,54 @@
+# ReelDrop: scheduler (sends reels) + dashboard (web UI).
+# Both share ./data (SQLite DB, session.json, logs) and ./config (schedules.yaml).
+# Secrets live in .env on the host only; .env is never copied into the image.
+#
+# The container user is UID/GID 1000 by default. If your host user differs, set
+# REELDROP_UID / REELDROP_GID in .env (or the shell) and rebuild, or run
+#   sudo chown -R 1000:1000 data config
+x-build: &build
+  context: .
+  args:
+    APP_UID: ${REELDROP_UID:-1000}
+    APP_GID: ${REELDROP_GID:-1000}
+
+services:
+  scheduler:
+    build: *build
+    image: reeldrop:latest
+    command: python main.py
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    restart: unless-stopped
+
+  dashboard:
+    build: *build
+    image: reeldrop:latest
+    command: >
+      streamlit run dashboard.py
+      --server.port 8501
+      --server.address 0.0.0.0
+      --server.headless true
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    # SECURITY: do NOT expose this port to the open internet. The dashboard
+    # controls sending and the password gate alone is not enough. Reach it
+    # through a VPN such as Tailscale, or bind to localhost only by changing
+    # the mapping to "127.0.0.1:8501:8501" and using an SSH tunnel.
+    ports:
+      - "8501:8501"
+    healthcheck:
+      # python stdlib only: the slim image has no curl.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
