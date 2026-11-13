@@ -27,9 +27,9 @@ A disk means each deploy restarts the one instance, so the dashboard is unavaila
 
 ## How GitHub triggers deploys (the "webhook")
 
-You don't create a webhook by hand. Connecting the repo installs Render's GitHub app, which listens for pushes. `render.yaml` sets `autoDeployTrigger: checksPass`, so after each push to `main`, Render waits for the **CI** workflow (`.github/workflows/ci.yml`, runs `pytest`) and deploys only if it passes.
+You don't create a webhook by hand. Connecting the repo installs Render's GitHub app, which listens for pushes. `render.yaml` sets `autoDeployTrigger: commit`, so every push (or merge) to `main` rebuilds and redeploys the service.
 
-If you'd rather deploy on every push, whether or not CI passes, change it to `autoDeployTrigger: commit`.
+To deploy only after tests pass, change it to `autoDeployTrigger: checksPass`. That uses the **CI** workflow (`.github/workflows/ci.yml`, runs `pytest`), which requires GitHub Actions to be enabled on the repo (Settings → Actions). I could not confirm that CI runs on this repo, so the default does not depend on it.
 
 ## Where things live
 
