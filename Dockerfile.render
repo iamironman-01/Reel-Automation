@@ -1,0 +1,30 @@
+# Single-container image for Render: dashboard (web) + scheduler, supervised by start.py.
+# Render persistent disks can't be shared between services, so both run here and the
+# one disk is mounted at /app/data (database, Instagram session, logs, live schedules).
+FROM python:3.11-slim
+
+ENV TZ=Asia/Kolkata \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HOME=/home/reeldrop \
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
+    SCHEDULES_PATH=/app/data/schedules.yaml
+
+RUN groupadd --gid 1000 reeldrop \
+ && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/reeldrop --shell /usr/sbin/nologin reeldrop
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+RUN chmod +x /app/docker/render-entrypoint.sh \
+ && mkdir -p /app/data \
+ && chown -R reeldrop:reeldrop /app /home/reeldrop
+
+# The entrypoint starts as root only to fix ownership of the mounted disk, then
+# drops to the unprivileged "reeldrop" user before running the app.
+ENTRYPOINT ["/app/docker/render-entrypoint.sh"]
+CMD ["python", "start.py"]
