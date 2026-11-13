@@ -6,8 +6,8 @@
 #
 # Deploy: Render dashboard -> New -> Blueprint -> pick this repo. Then fill in the
 # variables marked "sync: false" (secrets are never stored in this file).
-# Redeploys: Render's GitHub connection redeploys automatically on every push to `branch`
-# once the GitHub Actions checks pass (autoDeployTrigger: checksPass).
+# Redeploys: Render's GitHub connection redeploys automatically on every push to `branch`.
+# To deploy only after the GitHub Actions CI passes, change this to `checksPass`.
 services:
   - type: web
     name: reeldrop
@@ -17,7 +17,7 @@ services:
     plan: starter
     region: singapore            # closest Render region to India
     branch: main
-    autoDeployTrigger: checksPass
+    autoDeployTrigger: commit
     healthCheckPath: /_stcore/health
     disk:
       name: reeldrop-data
