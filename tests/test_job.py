@@ -360,7 +360,8 @@ def test_main_starts_scheduler_and_handles_ctrl_c(main_mod, monkeypatch):
     monkeypatch.setattr(FakeScheduler, "start", lambda self: (_ for _ in ()).throw(KeyboardInterrupt()))
     main_mod.main()                               # must not raise
     sched = FakeScheduler.instances[0]
-    rule_jobs = [j for j in sched.jobs if j[2]["id"] != "__reload__"]   # + the reload job
+    rule_jobs = [j for j in sched.jobs
+                 if j[2]["id"] not in ("__reload__", "__discovery__")]   # + the two system jobs
     assert len(rule_jobs) == 1 and sched.shutdown_called
 
 

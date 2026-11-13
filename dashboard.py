@@ -12,6 +12,7 @@ from reeldrop.dashboard_helpers import (
     STATUS_FILTERS,
     add_links,
     daily_counts,
+    discovery_status,
     failure_rate,
     move_message,
     password_config_error,
@@ -19,6 +20,7 @@ from reeldrop.dashboard_helpers import (
     pending_ids,
     queue_query,
     recipient_message,
+    request_refill_message,
     save_schedules,
     weekly_counts,
 )
@@ -31,7 +33,9 @@ from reeldrop.queue import (
     sent_today,
     set_recipient,
 )
+from reeldrop.settings import get as get_setting
 from reeldrop.settings import is_paused, set_paused
+from reeldrop.settings import set_ as set_setting
 
 try:
     CONFIG_PATH = ensure_schedules_file()
@@ -93,8 +97,8 @@ c1.metric("Sent today", f"{sent_count} / {cfg.daily_cap}")
 c2.metric("In queue", pending)
 c3.metric("Status", "⛔ Paused" if paused else "✅ Running")
 
-t_add, t_queue, t_hist, t_stats, t_sched, t_set = st.tabs(
-    ["Add reels", "Queue", "History", "Stats", "Schedules", "Settings"]
+t_add, t_queue, t_disc, t_hist, t_stats, t_sched, t_set = st.tabs(
+    ["Add reels", "Queue", "Discovery", "History", "Stats", "Schedules", "Settings"]
 )
 
 # --- Add reels ---
@@ -191,6 +195,62 @@ with t_queue:
                                 st.session_state["flash"] = move_message(int(m_id), direction, True)
                                 st.rerun()
                             st.warning(move_message(int(m_id), direction, False))
+
+# --- Discovery ---
+with t_disc:
+    # Written by the scheduler process; the dashboard only reads these settings
+    # and sets the refill-request flag. It never logs in to Instagram.
+    disc_cfg = getattr(cfg, "discovery", None)
+    if "discovery_flash" in st.session_state:
+        level, msg = st.session_state.pop("discovery_flash")
+        (st.warning if level == "warning" else st.info)(msg)
+    try:
+        disc = discovery_status(get_setting, disc_cfg)
+    except sqlite3.Error as e:
+        st.error(f"Could not read discovery status: {e}")
+        disc = None
+    if disc is not None:
+        st.write("**Automatic discovery:** " + ("✅ enabled" if disc["enabled"] else "⛔ disabled"))
+        if disc_cfg is None:
+            st.caption("This version of the config has no `discovery:` support.")
+        d1, d2, d3 = st.columns(3)
+        d1.metric("Pending", pending)
+        d2.metric("Refill below", disc["min_pending"] if disc["min_pending"] is not None else "-")
+        d3.metric(
+            "Check every",
+            f"{disc['check_every_minutes']} min" if disc["check_every_minutes"] is not None else "-",
+        )
+        if disc["enabled"] and disc["min_pending"] is not None and pending < disc["min_pending"]:
+            st.caption("The queue is below the minimum, so the scheduler will refill it on its next check.")
+        st.write(f"**Last refill:** {disc['last_run']}")
+        st.write(f"**Last result:** {disc['last_summary']}")
+        if disc["refill_pending"]:
+            st.info("A refill is requested and waiting for the scheduler.")
+
+        st.subheader("Sources")
+        if disc["sources"]:
+            st.dataframe(
+                pd.DataFrame(disc["sources"], columns=["type", "value", "mode", "to"]),
+                use_container_width=True,
+            )
+        else:
+            st.caption("No sources configured. Add a `discovery:` block in the Schedules tab.")
+
+        if st.button("Refill now"):
+            try:
+                level, msg = request_refill_message(disc["enabled"], disc["refill_pending"])
+                if disc["enabled"] and not disc["refill_pending"]:
+                    set_setting("discovery_refill_requested", "1")
+            except sqlite3.Error as e:
+                st.error(f"Could not request a refill: {e}")
+            else:
+                st.session_state["discovery_flash"] = (level, msg)
+                st.rerun()
+        st.caption(
+            "The scheduler process does the actual Instagram fetching, using its own login. "
+            "The dashboard never logs in; this button only asks the scheduler to refill within "
+            "about a minute. Unofficial access: use a test account."
+        )
 
 # --- History ---
 with t_hist:
