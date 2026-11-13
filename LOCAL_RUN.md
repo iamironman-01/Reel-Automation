@@ -62,9 +62,18 @@ Open http://localhost:8501 and log in with the password from step 2.
 ## 5. Send for real (only when you are ready)
 
 1. Read the golden rules in `README.md`: use a **test account**, and get your friend's consent.
-2. Safest: the Telegram route. In `.env` set `SENDER=telegram`, `TELEGRAM_BOT_TOKEN` and `TELEGRAM_FRIEND_CHAT_ID`.
-3. Instagram (Route B) is against Instagram's Terms and can get the account blocked. If you use it, set `SENDER=instagrapi`, `IG_USERNAME`, `IG_PASSWORD`, keep `daily_cap` at 5 to 10, and test with your own second account first.
-4. Restart the scheduler after changing `.env`.
+2. To deliver reels as real Instagram DMs, use the Instagram route. It is against Instagram's Terms and can get the account blocked, so use a test account and keep `daily_cap` at 5 to 10. In `.env` set `SENDER=instagrapi`, `IG_USERNAME`, `IG_PASSWORD`. If the account uses two-factor, also set `IG_TOTP_SECRET` (the base32 seed from your authenticator setup); `IG_VERIFICATION_CODE` is a one-time code if Instagram asks for one.
+3. In `config/schedules.yaml`, set the friend's Instagram username as `recipient`.
+4. Check it step by step. The first command sends nothing; the others send only to the account you name with `--to`, so use your own second account first:
+   ```bash
+   cli instagram-check                                                  # login only
+   cli instagram-check --to your_second_account                         # looks the account up
+   cli instagram-check --to your_second_account --send-test-text        # sends "ReelDrop test message"
+   cli instagram-check --to your_second_account --reel "https://www.instagram.com/reel/XXXXXXXXXXX/"
+   ```
+   The last command says whether the reel arrived as a native reel share or as a link. The friend should follow (or accept) the sending account, or the DM can appear under **Message requests**.
+5. Restart the scheduler after changing `.env`, and stop if Instagram shows any warning.
+6. Optional: Telegram alerts to your phone. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_MY_CHAT_ID`. (Telegram can also deliver reels instead of Instagram with `SENDER=telegram`, `TELEGRAM_FRIEND_CHAT_ID`, but then the friend gets links on Telegram, not Instagram DMs.)
 
 Never commit `.env`, `data/` or `session.json` (they are already in `.gitignore`).
 
@@ -72,7 +81,7 @@ Never commit `.env`, `data/` or `session.json` (they are already in `.gitignore`
 
 ReelDrop can find reels itself from hashtags, creators or a saved collection. It uses Instagram's unofficial API, so use a test account only.
 
-1. In `.env` set `SENDER=instagrapi` plus `IG_USERNAME` and `IG_PASSWORD`. (With `SENDER=telegram` discovery still needs the `IG_*` login, read-only.)
+1. In `.env` set `SENDER=instagrapi` plus `IG_USERNAME` and `IG_PASSWORD`. (With the optional `SENDER=telegram` discovery still needs the `IG_*` login, read-only.)
 2. In `config/schedules.yaml` (or the dashboard's Schedules tab) add a `discovery:` block with `enabled: true` and at least one source. A commented example is at the end of the file, and `README.md` describes every field.
 3. Check it first: `cli discover --sources`, then `cli discover --dry-run` (shows what would be added, adds nothing).
 4. Start the scheduler. It tops the queue up on its own; the dashboard's **Discovery** tab has a **Refill now** button.

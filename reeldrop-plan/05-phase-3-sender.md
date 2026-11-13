@@ -61,7 +61,10 @@ class InstagrapiSender(Sender):
             raise BlockedError(str(e)) from e
 ```
 
+> **Verified against instagrapi 3.x (from its documentation and source, not against live Instagram).** `direct_media_share` takes a `media_type` argument that defaults to `"photo"`. A reel must be shared with `media_type="video"`, so the sketch above needs `self.cl.direct_media_share(media_id, [uid], media_type="video")`. The real sender in `reeldrop/senders/instagrapi_sender.py` does this, and `instagram-check --reel` reports whether the native share or the link fallback was used. Not yet confirmed on a live account.
+
 Tips:
+- Check the whole chain with `python -m reeldrop instagram-check` (login only), then `--to <second account> --send-test-text`, then `--to <second account> --reel <url>`.
 - Log in **once manually** in the Instagram app on the test account, complete any security check, then run the script.
 - Run it from your **home internet** at first; logins from cloud servers trigger more security checks.
 - Keep `daily_cap` low (5–10) and `gap_seconds` ≥ 30.

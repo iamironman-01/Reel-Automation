@@ -20,10 +20,10 @@ A disk means each deploy restarts the one instance, so the dashboard is unavaila
 2. In Render: **New → Blueprint**, connect your GitHub account, and pick `iamironman-01/Reel-Automation`. Render reads `render.yaml`.
 3. Fill in the variables marked *sync: false*:
    - `DASHBOARD_PASSWORD`: a real password (the app refuses `change-me`).
-   - Telegram route: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_FRIEND_CHAT_ID`, `TELEGRAM_MY_CHAT_ID`.
-   - Instagram route B: `IG_USERNAME`, `IG_PASSWORD`. Only with a separate test account.
+   - Instagram route B (real Instagram DMs): `IG_USERNAME`, `IG_PASSWORD`, and ideally `IG_TOTP_SECRET`. Only with a separate test account.
+   - Telegram (optional, alerts or an alternative route): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_MY_CHAT_ID`, and `TELEGRAM_FRIEND_CHAT_ID` if Telegram is the sender.
 4. Deploy. Open the service URL, log in, and check the dashboard. `SENDER` starts as `dry_run`, so nothing real is sent.
-5. When dry-run looks right, set `SENDER` to `telegram` (or `instagrapi`) under **Environment** and save. Render redeploys.
+5. When dry-run looks right, set `SENDER` to `instagrapi` (or `telegram`) under **Environment** and save. Render redeploys.
 
 ## How GitHub triggers deploys (the "webhook")
 
@@ -42,7 +42,7 @@ To deploy only after tests pass, change it to `autoDeployTrigger: checksPass`. T
 
 ## Risks specific to a cloud host
 
-- **Instagram Route B from a cloud IP** triggers more login challenges and blocks. Prefer the Telegram route here, or run Route B at home.
+- **Instagram Route B from a cloud IP** is riskier: cloud addresses get more login checks and blocks than a home connection. Keep `session.json` on the persistent disk so ReelDrop reuses the login instead of logging in again, and set `IG_TOTP_SECRET` so two-factor prompts can be answered automatically. If it keeps getting challenged, run Route B at home instead. Telegram stays optional here, for alerts to yourself (`TELEGRAM_MY_CHAT_ID`).
 - **Backups:** the disk is the only copy. Render takes daily disk snapshots, but also download the database now and then (Render Shell: `cp /app/data/reeldrop.db ...`).
 - **Dashboard is public.** The password gate is the only protection. Use a long password.
 - **Telegram control:** keep `TELEGRAM_CONTROL=0` until `TELEGRAM_MY_CHAT_ID` is your own chat id.

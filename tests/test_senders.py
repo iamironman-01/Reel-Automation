@@ -219,6 +219,11 @@ def make_instagrapi_fakes():
     for n in ("ChallengeRequired", "FeedbackRequired", "LoginRequired", "PleaseWaitFewMinutes"):
         setattr(exc_mod, n, type(n, (Exception,), {}))
 
+    class Message:
+        def __init__(self, id="m1", thread_id="t1"):
+            self.id = id
+            self.thread_id = thread_id
+
     class Client:
         instances = []
 
@@ -232,7 +237,7 @@ def make_instagrapi_fakes():
         def load_settings(self, path):
             self.calls.append(("load_settings", str(path)))
 
-        def login(self, user, password):
+        def login(self, user, password, verification_code=""):
             self.calls.append(("login", user, password))
 
         def dump_settings(self, path):
@@ -250,15 +255,18 @@ def make_instagrapi_fakes():
         def media_id(self, pk):
             return "pk1_owner"
 
-        def direct_media_share(self, media_id, user_ids):
-            self.calls.append(("direct_media_share", media_id, user_ids))
+        def direct_media_share(self, media_id, user_ids, thread_ids=(), send_attribute="feed_timeline",
+                               media_type="photo"):
+            self.calls.append(("direct_media_share", media_id, user_ids, media_type))
             if self.share_error:
                 raise self.share_error
+            return Message()
 
         def direct_send(self, text, user_ids):
             self.calls.append(("direct_send", text, user_ids))
             if self.send_error:
                 raise self.send_error
+            return Message()
 
     pkg = types.ModuleType("instagrapi")
     pkg.__path__ = []
@@ -271,6 +279,8 @@ def make_instagrapi_fakes():
 def ig(load_fresh, monkeypatch, tmp_path):
     monkeypatch.setenv("IG_USERNAME", "me")
     monkeypatch.setenv("IG_PASSWORD", "hunter2-password")
+    monkeypatch.delenv("IG_TOTP_SECRET", raising=False)
+    monkeypatch.delenv("IG_VERIFICATION_CODE", raising=False)
     fakes, Client, exc = make_instagrapi_fakes()
     mod = load_fresh("instagrapi_sender", fakes)
     monkeypatch.setattr(mod, "SESSION", tmp_path / "data" / "session.json")
@@ -291,6 +301,8 @@ def test_instagrapi_login_and_session_saved(ig):
 def test_instagrapi_reuses_saved_session(load_fresh, monkeypatch, tmp_path):
     monkeypatch.setenv("IG_USERNAME", "me")
     monkeypatch.setenv("IG_PASSWORD", "pw")
+    monkeypatch.delenv("IG_TOTP_SECRET", raising=False)
+    monkeypatch.delenv("IG_VERIFICATION_CODE", raising=False)
     fakes, _, _ = make_instagrapi_fakes()
     mod = load_fresh("instagrapi_sender", fakes)
     session = tmp_path / "session.json"
@@ -300,10 +312,11 @@ def test_instagrapi_reuses_saved_session(load_fresh, monkeypatch, tmp_path):
     assert [c[0] for c in s.cl.calls] == ["load_settings", "login", "dump_settings"]
 
 
-def test_instagrapi_native_share(ig):
+def test_instagrapi_native_share_is_a_video_share(ig):
     ig.sender.send("friend", URL)
-    assert ("direct_media_share", "pk1_owner", ["555"]) in ig.cl.calls
+    assert ("direct_media_share", "pk1_owner", [555], "video") in ig.cl.calls
     assert not any(c[0] == "direct_send" for c in ig.cl.calls)
+    assert ig.sender.last_method == "native"
 
 
 def test_instagrapi_user_id_cached(ig):
@@ -317,6 +330,7 @@ def test_instagrapi_fallback_to_direct_send(ig):
     ig.cl.share_error = ValueError("share endpoint changed")
     ig.sender.send("friend", URL)
     assert ("direct_send", URL, [555]) in ig.cl.calls
+    assert ig.sender.last_method == "link"
 
 
 @pytest.mark.parametrize("name", ["ChallengeRequired", "FeedbackRequired",

@@ -8,18 +8,15 @@ import logging
 from dataclasses import dataclass, field
 
 from . import queue
-from .senders.base import BlockedError
+from .senders.base import BLOCK_ERROR_NAMES, BlockedError, is_block_error  # noqa: F401
 
 log = logging.getLogger("reeldrop")
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 
-# instagrapi exception class names that mean "Instagram is challenging/throttling us".
-# Matched by name (anywhere in the MRO) so we need no instagrapi import for injected clients.
-BLOCK_ERROR_NAMES = frozenset(
-    {"ChallengeRequired", "FeedbackRequired", "LoginRequired", "PleaseWaitFewMinutes"}
-)
+# BLOCK_ERROR_NAMES and is_block_error live in senders/base.py (one source of truth);
+# they are re-exported here so existing imports keep working.
 
 REEL_URL = "https://www.instagram.com/reel/{code}/"
 MEDIA_TYPE_VIDEO = 2          # instagrapi: 1 photo, 2 video/reel/igtv, 8 album
@@ -48,7 +45,7 @@ def format_result(result: ImportResult) -> str:
 # --- helpers -----------------------------------------------------------------
 
 def _is_block_error(exc: BaseException) -> bool:
-    return any(c.__name__ in BLOCK_ERROR_NAMES for c in type(exc).__mro__)
+    return is_block_error(exc)
 
 
 def _blocked(exc: BaseException) -> BlockedError:
@@ -58,10 +55,9 @@ def _blocked(exc: BaseException) -> BlockedError:
 def _build_client():
     """Build a logged-in instagrapi Client.
 
-    Reuses InstagrapiSender (same IG_USERNAME / IG_PASSWORD env vars and
-    data/session.json handling) and takes its `.cl`, so login code is not duplicated
-    and instagrapi_sender.py stays untouched. Imported lazily so the importer works
-    without instagrapi when a client is injected.
+    Reuses InstagrapiSender (same IG_USERNAME / IG_PASSWORD env vars, two-factor and
+    data/session.json handling) and takes its `.cl`, so login code is not duplicated.
+    Imported lazily so the importer works without instagrapi when a client is injected.
     """
     from .senders.instagrapi_sender import InstagrapiSender
     try:

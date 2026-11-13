@@ -16,7 +16,7 @@ python -m pytest -q                     # whole suite (about 2 s)
 python main.py                          # scheduler (uses .env and config/schedules.yaml)
 streamlit run dashboard.py              # dashboard on :8501
 python start.py                         # dashboard + scheduler together (Render)
-python -m reeldrop add|list|remove|move|import-collection|discover ...   # CLI
+python -m reeldrop add|list|remove|move|import-collection|discover|instagram-check ...   # CLI
 bash scripts/run_local.sh demo          # isolated dry-run demo (Windows: scripts\run_local.bat demo)
 ```
 
@@ -57,6 +57,9 @@ sources / pasted links ─► reels table (SQLite) ─► scheduler rule fires �
 
 - `with connect() as c:` commits or rolls back **and closes** the connection (`_Connection.__exit__`). Do not use a connection after the block.
 - `reeldrop/queue.py` shadows the stdlib module name only if the package directory is itself on `sys.path`. Keep using relative imports inside the package.
+- `instagrapi` is pinned `>=3.2,<4`. Reels must be shared with `media_type="video"`; the library default is `"photo"`, which does not share a reel properly.
+- Block detection lives in `senders/base.py` (`BLOCK_ERROR_NAMES` / `is_block_error`). That is the single source of truth: do not add separate lists of block exceptions elsewhere.
+- `python -m reeldrop instagram-check` is the manual pre-flight. It sends nothing unless `--send-test-text` or `--reel` is given (both need `--to`), and it only changes the pause flag on a block.
 - Third-party libraries are imported lazily where tests must run without them (`yaml` in `load_config`, `requests` in `notify_me`, `instagrapi` inside the sender). Keep new code importable without those libraries.
 - Each discovery source type has its own small `_fetch_*` function in `discovery.py`. The `instagrapi` method names there were written from documentation and have **not** been run against live Instagram. Fix signature problems there, not in callers.
 - Time zones: `TZ_NAME` for timestamps, `timezone:` in the YAML for rules. A timezone change in the YAML needs a scheduler restart.
