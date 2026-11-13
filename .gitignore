@@ -6,3 +6,5 @@ data/
 *.db
 session.json
 *.log
+
+.local-demo/
