@@ -7,7 +7,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
-from reeldrop.config import load_config
+from reeldrop.config import ensure_schedules_file, load_config, schedules_path
 from reeldrop.dashboard_helpers import (
     STATUS_FILTERS,
     add_links,
@@ -33,7 +33,10 @@ from reeldrop.queue import (
 )
 from reeldrop.settings import is_paused, set_paused
 
-CONFIG_PATH = "config/schedules.yaml"
+try:
+    CONFIG_PATH = ensure_schedules_file()
+except OSError:
+    CONFIG_PATH = schedules_path()   # the load below reports the problem to the user
 
 st.set_page_config(page_title="ReelDrop", page_icon="🎬")
 

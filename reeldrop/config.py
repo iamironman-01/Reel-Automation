@@ -1,5 +1,7 @@
 import datetime
+import os
 import re
+import shutil
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
@@ -186,9 +188,31 @@ def parse_config(data) -> Config:
                   rules=rules, quiet_days=quiet_days)
 
 
-def load_config(path: str = "config/schedules.yaml") -> Config:
+DEFAULT_SCHEDULES_PATH = "config/schedules.yaml"
+
+
+def schedules_path() -> str:
+    """Where the live schedule file is. Set SCHEDULES_PATH to keep it on a persistent disk."""
+    return os.environ.get("SCHEDULES_PATH") or DEFAULT_SCHEDULES_PATH
+
+
+def ensure_schedules_file(default: str = DEFAULT_SCHEDULES_PATH) -> str:
+    """Make sure the live schedule file exists, seeding it from the repo default.
+
+    On a host where the image is rebuilt on every deploy (e.g. Render), edits made in
+    the dashboard must live on the persistent disk, not inside the image. The first
+    start copies the shipped default there; later starts leave the edited file alone.
+    """
+    target = schedules_path()
+    if not os.path.exists(target) and os.path.abspath(target) != os.path.abspath(default):
+        os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
+        shutil.copyfile(default, target)
+    return target
+
+
+def load_config(path: str | None = None) -> Config:
     import yaml  # imported here so parse_config() works without PyYAML installed
 
-    with open(path, encoding="utf-8") as f:
+    with open(path or schedules_path(), encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return parse_config(data)
