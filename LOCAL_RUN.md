@@ -68,6 +68,17 @@ Open http://localhost:8501 and log in with the password from step 2.
 
 Never commit `.env`, `data/` or `session.json` (they are already in `.gitignore`).
 
+## 6. Make it fully automatic (optional, no pasted links)
+
+ReelDrop can find reels itself from hashtags, creators or a saved collection. It uses Instagram's unofficial API, so use a test account only.
+
+1. In `.env` set `SENDER=instagrapi` plus `IG_USERNAME` and `IG_PASSWORD`. (With `SENDER=telegram` discovery still needs the `IG_*` login, read-only.)
+2. In `config/schedules.yaml` (or the dashboard's Schedules tab) add a `discovery:` block with `enabled: true` and at least one source. A commented example is at the end of the file, and `README.md` describes every field.
+3. Check it first: `cli discover --sources`, then `cli discover --dry-run` (shows what would be added, adds nothing).
+4. Start the scheduler. It tops the queue up on its own; the dashboard's **Discovery** tab has a **Refill now** button.
+
+This has not been verified against live Instagram yet.
+
 ## Reset
 
 Delete `data/` to start with an empty queue. Delete `.local-demo/` to remove demo leftovers.

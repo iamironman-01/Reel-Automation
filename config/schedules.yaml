@@ -15,3 +15,23 @@ rules:
     time: "11:00"
     count: 5
     recipient: friend_username
+
+# Optional: find reels automatically instead of pasting links (see README, "Automatic discovery").
+# Needs SENDER=instagrapi or IG_USERNAME/IG_PASSWORD in .env. Off unless you uncomment it.
+# discovery:
+#   enabled: true
+#   min_pending: 15            # refill when fewer than this are pending
+#   fetch_per_source: 10       # reels requested per source per refill
+#   max_per_refill: 30         # hard cap added in one refill
+#   check_every_minutes: 180   # at most one automatic refill per 3 hours (minimum 30)
+#   min_likes: 0
+#   delay_seconds: 5           # pause between sources
+#   sources:
+#     - type: hashtag
+#       value: funny
+#       mode: top              # top | recent
+#     - type: user
+#       value: some_creator
+#     - type: collection
+#       value: "Funny"
+#       to: friend_username    # optional: only that friend gets these
