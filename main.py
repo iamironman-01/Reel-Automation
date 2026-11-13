@@ -1,3 +1,4 @@
+import importlib
 import os
 import sys
 import logging
@@ -13,7 +14,7 @@ load_dotenv()   # must run before the reeldrop imports below read the environmen
 
 from reeldrop.config import RELOAD_JOB_ID, ensure_schedules_file, load_config, schedules_path
 from reeldrop.db import init_db
-from reeldrop.job import run_rule
+from reeldrop.job import run_rule, set_client_provider
 from reeldrop.notify import notify_me
 from reeldrop.senders import get_sender
 
@@ -21,6 +22,10 @@ log = logging.getLogger("reeldrop")
 
 CONFIG_PATH = schedules_path()   # SCHEDULES_PATH env, default config/schedules.yaml
 RELOAD_INTERVAL_SECONDS = 60
+DISCOVERY_JOB_ID = "__discovery__"
+DISCOVERY_INTERVAL_SECONDS = 60
+# Scheduler jobs that are not rule jobs; reload and rule registration must never touch them.
+SYSTEM_JOB_IDS = frozenset({RELOAD_JOB_ID, DISCOVERY_JOB_ID})
 
 
 def setup_logging():
@@ -38,6 +43,8 @@ def register_jobs(sched, cfg, sender):
     # Build every trigger first so a bad rule cannot leave the schedule half-updated.
     planned = []
     for rule in cfg.rules:
+        if rule.name in SYSTEM_JOB_IDS:   # would overwrite a system job
+            raise ValueError(f"Rule name {rule.name!r} is reserved")
         hour, minute = rule.time.split(":")
         trigger = CronTrigger(day_of_week=rule.days, hour=int(hour), minute=int(minute),
                               timezone=cfg.timezone)
@@ -125,7 +132,9 @@ def reload_if_changed(sched, state, path, sender, loader=None):
         register_jobs(sched, new_cfg, sender)    # add or replace (all triggers are built first)
         names = {r.name for r in new_cfg.rules}
         present = {j.id for j in sched.get_jobs()}
-        for rule in state.cfg.rules:             # only ever rule jobs, never the reload job
+        for rule in state.cfg.rules:             # only ever rule jobs, never the system jobs
+            if rule.name in SYSTEM_JOB_IDS:
+                continue
             if rule.name not in names and rule.name in present:
                 sched.remove_job(rule.name)
     except Exception as e:
@@ -137,6 +146,31 @@ def reload_if_changed(sched, state, path, sender, loader=None):
     log.info("Reloaded %s: %s", path, _describe_changes(state.cfg, new_cfg))
     state.cfg = new_cfg
     return "reloaded"
+
+
+def discovery_tick(get_client):
+    """Scheduler job: let auto-discovery top up the queue. Never raises.
+
+    Cheap no-op while discovery is disabled; the module is imported lazily so a
+    missing or broken one cannot stop the scheduler.
+    """
+    if get_client is None:
+        return
+    try:
+        discovery = importlib.import_module("reeldrop.discovery")
+        discovery.tick(get_client)
+    except Exception as e:
+        log.error("Auto-discovery tick failed: %s: %s", type(e).__name__, e)
+
+
+def build_client_provider(sender):
+    """One shared client provider for the discovery job and the rule jobs, or None."""
+    try:
+        discovery = importlib.import_module("reeldrop.discovery")
+        return discovery.make_client_provider(sender)
+    except Exception as e:
+        log.warning("Auto-discovery unavailable: %s: %s", type(e).__name__, e)
+        return None
 
 
 def main():
@@ -171,6 +205,20 @@ def main():
         seconds=RELOAD_INTERVAL_SECONDS,
         args=[sched, ReloadState(cfg=cfg, mtime=mtime), CONFIG_PATH, sender],
         id=RELOAD_JOB_ID,
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Always registered: it no-ops while discovery is disabled, and this way enabling
+    # discovery from the dashboard takes effect through the live reload, no restart.
+    get_client = build_client_provider(sender)
+    set_client_provider(get_client)
+    sched.add_job(
+        discovery_tick,
+        "interval",
+        seconds=DISCOVERY_INTERVAL_SECONDS,
+        args=[get_client],
+        id=DISCOVERY_JOB_ID,
         replace_existing=True,
         coalesce=True,
         max_instances=1,

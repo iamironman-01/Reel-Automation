@@ -22,6 +22,7 @@ Read the files **in order**. Each phase ends with something that works on its ow
 | 09 | [09-phase-7-extensions.md](09-phase-7-extensions.md) | Extra features | Ongoing |
 | 10 | [10-testing-plan.md](10-testing-plan.md) | Test cases for every phase | — |
 | 11 | [11-risks-and-safety.md](11-risks-and-safety.md) | Risks and mitigations | — |
+| 12 | [12-phase-8-auto-discovery.md](12-phase-8-auto-discovery.md) | Auto-discovery of reels (no pasted links) | 2–3 days |
 
 ## Progress tracker
 
@@ -35,6 +36,7 @@ Legend: `[x]` built and verified in the build sandbox · `[~]` code complete, bu
 - [~] Phase 5 — Dashboard — compiled and helper-tested; the Streamlit UI has not been run
 - [~] Phase 6 — Deployment — files written; Docker build and the 7-day / reboot check not run
 - [x] Phase 7 — Extensions — all 9 ideas built (tested with fakes; auto-import and Telegram control not run against the live services)
+- [~] Phase 8 — Auto-discovery — code complete; needs a real Instagram test account run
 
 ## Timeline
 

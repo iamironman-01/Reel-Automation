@@ -1,3 +1,4 @@
+import importlib
 import time
 import logging
 import threading
@@ -49,6 +50,32 @@ def _today(cfg) -> str:
     return datetime.now(ZoneInfo(cfg.timezone)).date().isoformat()
 
 
+# Callable returning an instagrapi client for auto-discovery; set once by main().
+# While it is None, a short queue is never topped up.
+_client_provider = None
+
+
+def set_client_provider(fn):
+    """Register (or clear, with None) the callable discovery uses to get a client."""
+    global _client_provider
+    _client_provider = fn
+
+
+def _discovery_enabled(cfg) -> bool:
+    return bool(getattr(getattr(cfg, "discovery", None), "enabled", False))
+
+
+def _top_up(needed: int) -> int:
+    """Ask discovery for `needed` more reels. Never raises; returns how many were added."""
+    try:
+        discovery = importlib.import_module("reeldrop.discovery")
+        added = discovery.top_up(needed, _client_provider)
+        return added if isinstance(added, int) else 0
+    except Exception as e:      # discovery is optional and must never break sending
+        log.warning("Auto-discovery top-up failed: %s: %s", type(e).__name__, e)
+        return 0
+
+
 def run_rule(rule, cfg, sender):
     with _RUN_LOCK:
         _run_rule(rule, cfg, sender)
@@ -66,9 +93,16 @@ def _run_rule(rule, cfg, sender):
     if remaining <= 0:
         log.info("[%s] daily cap reached", rule.name)
         return
-    reels = next_pending(
-        min(rule.count, remaining), order=rule.pick, recipient=rule.recipient
-    )
+    wanted = min(rule.count, remaining)
+    reels = next_pending(wanted, order=rule.pick, recipient=rule.recipient)
+    if len(reels) < wanted and _client_provider is not None and _discovery_enabled(cfg):
+        # Short queue: try one immediate top-up, then look again.
+        log.info("[%s] queue short (%d/%d) — trying auto-discovery", rule.name, len(reels), wanted)
+        _top_up(wanted - len(reels))
+        if is_paused():                 # a block during discovery pauses everything
+            log.warning("[%s] paused by auto-discovery — skipping", rule.name)
+            return
+        reels = next_pending(wanted, order=rule.pick, recipient=rule.recipient)
     if not reels:
         notify_me(f"ReelDrop: queue is empty for {rule.name} — add more reels")
         return

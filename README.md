@@ -76,6 +76,7 @@ python -m reeldrop list [--status pending|sent|failed]
 python -m reeldrop remove <id>
 python -m reeldrop move <id> {up,down,top,bottom}                     # reorder a pending reel
 python -m reeldrop import-collection "<name>" [--limit N] [--dry-run]  # needs instagrapi credentials
+python -m reeldrop discover [--sources | --dry-run]                    # auto-discovery, see below
 ```
 
 `add` rejects links that are not Instagram reel/post links, and reels already in the queue. Tracking parameters are stripped, so the same reel with a different `?igsh=` counts as a duplicate.
@@ -214,10 +215,11 @@ reeldrop/
 ├── data/                      # created at runtime (db, session, logs); not committed
 ├── reeldrop/
 │   ├── __init__.py
-│   ├── __main__.py            # CLI: add / list / remove / move / import-collection
+│   ├── __main__.py            # CLI: add / list / remove / move / import-collection / discover
 │   ├── db.py                  # connection + schema + in-place migration
 │   ├── queue.py               # queue functions
 │   ├── importer.py            # import reels from a saved collection
+│   ├── discovery.py           # find reels from hashtags / users / collections
 │   ├── telegram_control.py    # /add /pause /status from your phone
 │   ├── settings.py            # pause switch
 │   ├── config.py              # loads schedules.yaml
@@ -319,6 +321,69 @@ Pending reels are sent in queue order, which is the order they were added unless
 
 Set `TELEGRAM_CONTROL=1` in `.env` (plus `TELEGRAM_BOT_TOKEN` and `TELEGRAM_MY_CHAT_ID`) and the scheduler also listens to your bot. Commands: `/add <link> [note]` (or just paste a reel link), `/pause`, `/resume`, `/status`, `/queue`, `/help`. Only messages from `TELEGRAM_MY_CHAT_ID` are accepted; everything else is ignored. The bot uses long polling, so it needs no open port.
 
+### Automatic discovery (no pasted links)
+
+ReelDrop can find reels by itself instead of you pasting links. You list sources (hashtags, creators, or one of your saved collections). When fewer than `min_pending` reels are waiting, the scheduler fetches reels from those sources and adds them to the queue. Sending works exactly as before.
+
+**Requirements.** Discovery reads Instagram through `instagrapi`, so it needs `IG_USERNAME` / `IG_PASSWORD` in `.env`. Two setups work:
+
+- `SENDER=instagrapi` (Route B): one login is used for both discovery and sending.
+- `SENDER=telegram`: discovery logs in separately, read-only, and reels are delivered over Telegram.
+
+The official API (`SENDER=official`) cannot browse reels, so it cannot be used for discovery.
+
+**Config.** Add a top-level `discovery:` block to `config/schedules.yaml` (or edit it in the dashboard's Schedules tab):
+
+```yaml
+discovery:
+  enabled: true
+  min_pending: 15            # refill when fewer than this are pending
+  fetch_per_source: 10       # reels requested per source per refill
+  max_per_refill: 30         # hard cap added in one refill
+  check_every_minutes: 180   # at most one automatic refill per 3 hours
+  min_likes: 0
+  delay_seconds: 5           # pause between sources
+  sources:
+    - type: hashtag
+      value: funny
+      mode: top              # top | recent
+    - type: user
+      value: some_creator
+    - type: collection
+      value: "Funny"
+      to: friend_username    # optional: only that friend gets these
+```
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `enabled` | `false` | Nothing logs in to Instagram unless this is `true`. It needs at least one source |
+| `min_pending` | 15 | Refill when fewer than this many reels are pending (1 to 500) |
+| `fetch_per_source` | 10 | Reels requested from each source per refill (1 to 50) |
+| `max_per_refill` | 30 | Hard cap on reels added in one refill (1 to 100) |
+| `check_every_minutes` | 180 | At most one automatic refill per this many minutes (30 to 1440) |
+| `min_likes` | 0 | Skip reels with fewer likes than this |
+| `delay_seconds` | 5 | Pause between sources (0 to 120) |
+| `sources[].type` | | `hashtag`, `user` or `collection` |
+| `sources[].value` | | Hashtag without `#`, username without `@`, or the saved collection's name |
+| `sources[].mode` | `top` | Hashtags only: `top` or `recent` |
+| `sources[].to` | none | Optional recipient. Reels from this source are only sent by the rule for that friend, like `add --to` |
+
+Only reels are kept (photos and albums are skipped). A reel already queued or sent is never added again. When a rule fires and the queue is empty, one immediate top-up is tried before giving up.
+
+**Throttling and safety.** Discovery is off by default. Automatic refills are limited by `check_every_minutes` (at least 30), `max_per_refill` and `delay_seconds` between sources. `daily_cap` and `gap_seconds` still limit sending. If Instagram blocks or challenges the account, sending is paused and an alert is sent, as for sending.
+
+**Commands.**
+
+```bash
+python -m reeldrop discover --sources    # list the configured sources
+python -m reeldrop discover --dry-run    # fetch and show what would be added; adds nothing
+python -m reeldrop discover              # run one refill now
+```
+
+Run `discover --dry-run` first. The dashboard's **Discovery** tab shows the sources, last refill time and result, and pending versus `min_pending`. Its **Refill now** button sets a flag; the scheduler process (not the dashboard, which never logs in to Instagram) picks it up within about a minute.
+
+**Risks.** This uses Instagram's unofficial private API, which violates Instagram's Terms of Service. Accounts can be action-blocked or banned, and the library can break after an Instagram update. Use a test account only, keep `daily_cap` low, and stop if Instagram shows a warning. This feature has been tested with fakes only and has not been verified against live Instagram; the first run on your test account is the real test. See [reeldrop-plan/12-phase-8-auto-discovery.md](reeldrop-plan/12-phase-8-auto-discovery.md).
+
 ### Not implemented
 
-Route C (browser automation) is not covered. Telegram control and auto-import were tested with fakes only, not against the live services.
+Route C (browser automation) is not covered. Telegram control, auto-import and auto-discovery were tested with fakes only, not against the live services.
