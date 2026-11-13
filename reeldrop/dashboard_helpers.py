@@ -110,6 +110,62 @@ def recipient_message(reel_id: int, recipient: str | None, found: bool) -> str:
     return f"Reel #{reel_id} now goes to {who}" if who else f"Reel #{reel_id} is now unassigned (any rule)"
 
 
+# --- discovery -------------------------------------------------------------
+# Setting keys are shared with reeldrop/discovery.py (the scheduler side); kept
+# as literals here so the dashboard does not import the Instagram code.
+
+DISCOVERY_REQUEST_KEY = "discovery_refill_requested"
+DISCOVERY_LAST_RUN_KEY = "discovery_last_run"
+DISCOVERY_LAST_SUMMARY_KEY = "discovery_last_summary"
+
+
+def discovery_status(get_setting: Callable[..., object], cfg_discovery) -> dict:
+    """Summarize auto-discovery for the Discovery tab.
+
+    get_setting(key, default) reads the settings table. cfg_discovery is
+    Config.discovery, or None when the config has no discovery support, in
+    which case the result is "disabled, no sources".
+    """
+    sources = [
+        {
+            "type": getattr(s, "type", ""),
+            "value": getattr(s, "value", ""),
+            "mode": getattr(s, "mode", None) or "-",
+            "to": getattr(s, "to", None) or "-",
+        }
+        for s in (getattr(cfg_discovery, "sources", None) or [])
+    ]
+    return {
+        "enabled": bool(getattr(cfg_discovery, "enabled", False)),
+        "last_run": get_setting(DISCOVERY_LAST_RUN_KEY, None) or "never",
+        "last_summary": get_setting(DISCOVERY_LAST_SUMMARY_KEY, None) or "-",
+        "refill_pending": get_setting(DISCOVERY_REQUEST_KEY, "0") == "1",
+        "sources": sources,
+        "min_pending": getattr(cfg_discovery, "min_pending", None),
+        "check_every_minutes": getattr(cfg_discovery, "check_every_minutes", None),
+    }
+
+
+def request_refill_message(enabled: bool, already_requested: bool) -> tuple[str, str]:
+    """(level, text) shown after pressing "Refill now". level: info | warning."""
+    if not enabled:
+        return (
+            "warning",
+            "Discovery is disabled. Set `discovery.enabled: true` (with at least one source) "
+            "in the Schedules tab first, then press Refill now.",
+        )
+    if already_requested:
+        return (
+            "info",
+            "A refill is already requested. The scheduler picks it up within about a minute.",
+        )
+    return (
+        "info",
+        "Refill requested. The scheduler picks it up within about a minute "
+        "and adds new reels to the queue.",
+    )
+
+
 # --- stats -----------------------------------------------------------------
 
 def _today() -> date:
