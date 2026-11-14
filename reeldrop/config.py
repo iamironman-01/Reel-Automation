@@ -33,8 +33,9 @@ class Rule:
 
 @dataclass
 class DiscoverySource:
-    type: str                   # "hashtag" | "user" | "collection"
-    value: str                  # hashtag (no '#'), username (no '@') or collection name
+    type: str                   # "hashtag" | "user" | "collection" | "explore"
+    value: str                  # hashtag (no '#'), username (no '@'), collection name,
+                                # or for explore: "reels" (Explore reels) | "feed" (Reels feed)
     mode: str = "top"           # hashtags only: "top" | "recent"
     to: str | None = None       # optional recipient: reels from this source are for them only
 
@@ -175,8 +176,10 @@ def _parse_quiet_days(raw) -> list[str]:
     return sorted(days)
 
 
-SOURCE_TYPES = ("hashtag", "user", "collection")
+SOURCE_TYPES = ("hashtag", "user", "collection", "explore")
 HASHTAG_MODES = ("top", "recent")
+# explore sources need no search term: "reels" = Explore reels, "feed" = the account's Reels feed
+EXPLORE_VALUES = ("reels", "feed")
 _HASHTAG_RE = re.compile(r"^\w+$")                 # letters (any script), digits, underscore
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9._]+$")      # Instagram username characters
 
@@ -201,6 +204,8 @@ def _parse_discovery_source(s, index: int) -> DiscoverySource:
     stype = stype.strip().lower()
 
     value = s.get("value")
+    if stype == "explore" and value is None:
+        value = EXPLORE_VALUES[0]
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{label} ({stype}): value must be a non-empty string "
                          f"(quote it in YAML), got {value!r}")
@@ -215,6 +220,11 @@ def _parse_discovery_source(s, index: int) -> DiscoverySource:
         if not _USERNAME_RE.match(value):
             raise ValueError(f"{label}: invalid username {s['value']!r}; use letters, digits, "
                              f"'.' and '_' only (a leading @ is fine)")
+    elif stype == "explore":
+        value = value.lower()
+        if value not in EXPLORE_VALUES:
+            raise ValueError(f"{label}: explore value must be one of "
+                             f"{', '.join(EXPLORE_VALUES)}, got {s['value']!r}")
     label = f"discovery source {stype}:{value}"
 
     mode = s.get("mode")

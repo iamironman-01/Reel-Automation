@@ -64,7 +64,7 @@ sources / pasted links ─► reels table (SQLite) ─► scheduler rule fires �
 - Block detection lives in `senders/base.py` (`BLOCK_ERROR_NAMES` / `is_block_error`). That is the single source of truth: do not add separate lists of block exceptions elsewhere.
 - `python -m reeldrop instagram-check` is the manual pre-flight. It sends nothing unless `--send-test-text` or `--reel` is given (both need `--to`), and it only changes the pause flag on a block.
 - Third-party libraries are imported lazily where tests must run without them (`yaml` in `load_config`, `requests` in `notify_me`, `instagrapi` inside the sender). Keep new code importable without those libraries.
-- Each discovery source type has its own small `_fetch_*` function in `discovery.py`. The `instagrapi` method names there were written from documentation and have **not** been run against live Instagram. Fix signature problems there, not in callers.
+- Each discovery source type has its own small `_fetch_*` function in `discovery.py`. Only the `explore` source (`explore_reels` / `reels`) has been seen working on a live account; hashtag endpoints returned nothing there, and `user` / `collection` are untested live. Fix signature problems there, not in callers.
 - Time zones: `TZ_NAME` for timestamps, `timezone:` in the YAML for rules. A timezone change in the YAML needs a scheduler restart.
 - Persistence on Render is the disk at `/app/data`. The live schedule file is `SCHEDULES_PATH=/app/data/schedules.yaml`, seeded once from `config/schedules.yaml`.
 

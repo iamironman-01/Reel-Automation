@@ -408,7 +408,7 @@ Set `TELEGRAM_CONTROL=1` in `.env` (plus `TELEGRAM_BOT_TOKEN` and `TELEGRAM_MY_C
 
 ### Automatic discovery (no pasted links)
 
-ReelDrop can find reels by itself instead of you pasting links. You list sources (hashtags, creators, or one of your saved collections). When fewer than `min_pending` reels are waiting, the scheduler fetches reels from those sources and adds them to the queue. Sending works exactly as before.
+ReelDrop can find reels by itself instead of you pasting links. You list sources (Instagram's Explore reels, hashtags, creators, or one of your saved collections). When fewer than `min_pending` reels are waiting, the scheduler fetches reels from those sources and adds them to the queue. Sending works exactly as before.
 
 **Requirements.** Discovery reads Instagram through `instagrapi`, so it needs `IG_USERNAME` / `IG_PASSWORD` in `.env`. Two setups work:
 
@@ -429,6 +429,8 @@ discovery:
   min_likes: 0
   delay_seconds: 5           # pause between sources
   sources:
+    - type: explore          # Instagram picks the reels; no search term needed
+      value: reels           # reels (Explore) | feed (the account's Reels feed)
     - type: hashtag
       value: funny
       mode: top              # top | recent
@@ -448,8 +450,8 @@ discovery:
 | `check_every_minutes` | 180 | At most one automatic refill per this many minutes (30 to 1440) |
 | `min_likes` | 0 | Skip reels with fewer likes than this |
 | `delay_seconds` | 5 | Pause between sources (0 to 120) |
-| `sources[].type` | | `hashtag`, `user` or `collection` |
-| `sources[].value` | | Hashtag without `#`, username without `@`, or the saved collection's name |
+| `sources[].type` | | `explore`, `hashtag`, `user` or `collection` |
+| `sources[].value` | | Hashtag without `#`, username without `@`, or the saved collection's name. For `explore`: `reels` (default, the Explore reels tab) or `feed` (the account's own Reels feed) |
 | `sources[].mode` | `top` | Hashtags only: `top` or `recent` |
 | `sources[].to` | none | Optional recipient. Reels from this source are only sent by the rule for that friend, like `add --to` |
 
@@ -467,7 +469,7 @@ python -m reeldrop discover              # run one refill now
 
 Run `discover --dry-run` first. The dashboard's **Discovery** tab shows the sources, last refill time and result, and pending versus `min_pending`. Its **Refill now** button sets a flag; the scheduler process (not the dashboard, which never logs in to Instagram) picks it up within about a minute.
 
-**Risks.** This uses Instagram's unofficial private API, which violates Instagram's Terms of Service. Accounts can be action-blocked or banned, and the library can break after an Instagram update. Use a test account only, keep `daily_cap` low, and stop if Instagram shows a warning. This feature has been tested with fakes only and has not been verified against live Instagram; the first run on your test account is the real test. See [reeldrop-plan/12-phase-8-auto-discovery.md](reeldrop-plan/12-phase-8-auto-discovery.md).
+**Risks.** This uses Instagram's unofficial private API, which violates Instagram's Terms of Service. Accounts can be action-blocked or banned, and the library can break after an Instagram update. Use a test account only, keep `daily_cap` low, and stop if Instagram shows a warning. On a live test account (2026-11-14, instagrapi 3.2.12) the `explore` source returned reels and a native reel DM was delivered, while the `hashtag` sources returned nothing, so prefer `explore`. `user` and `collection` sources have been tested with fakes only. See [reeldrop-plan/12-phase-8-auto-discovery.md](reeldrop-plan/12-phase-8-auto-discovery.md).
 
 ### Not implemented
 

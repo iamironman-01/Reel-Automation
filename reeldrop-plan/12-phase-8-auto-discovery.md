@@ -72,3 +72,11 @@ One Instagram login only: discovery reuses the sender's client when `SENDER=inst
 ## Not verifiable offline
 
 Real `instagrapi` method behaviour (`hashtag_medias_top/recent`, `user_medias`, `collection_medias`), whether `direct_media_share` accepts the discovered reels, and how Instagram reacts. The first run on your test account is the real test.
+
+## Live findings (2026-11-14, instagrapi 3.2.12)
+
+- `hashtag_medias_top`, `hashtag_medias_top_v1` and `hashtag_medias_reels_v1` returned no medias on a live test account, without raising an error.
+- `explore_reels` and `reels` each returned reels (`media_type` 2, `product_type` `clips`).
+- A fourth source type, `explore`, was added for this: `value: reels` (default) uses `explore_reels`, `value: feed` uses `reels`. It needs no search term.
+- One reel found through `explore` was delivered to a second account as a native reel share (`direct_media_share` with `media_type="video"`).
+- `user` and `collection` sources are still untested against live Instagram.
