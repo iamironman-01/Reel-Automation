@@ -58,7 +58,7 @@ To put a reel into a friend's Instagram DMs as a real reel share, use **Route B 
 | Route | `SENDER` value | How it works | Sends any reel to a friend? | Risk |
 |-------|----------------|--------------|-----------------------------|------|
 | A. Official Messaging API | `official` | Meta Graph API with a Business/Creator account | No. Only replies within 24 hours after the friend messages you, and it sends the reel link as text | Low, fully allowed |
-| **B. Unofficial private API (`instagrapi`)** (main route) | `instagrapi` | Logs in as your account and shares the reel into the friend's DMs like the Share button does. If the native share fails it sends the link instead | Yes, as a real reel share | **High**: violates Instagram's Terms of Service. Action blocks or a permanent ban are possible |
+| **B. Unofficial private API (`instagrapi`)** (main route) | `instagrapi` | Logs in as your account and shares the reel into the friend's DMs like the Share button does. If the native share fails the reel is not sent (set `IG_LINK_FALLBACK=1` to send the link instead) | Yes, as a real reel share | **High**: violates Instagram's Terms of Service. Action blocks or a permanent ban are possible |
 | C. Browser automation | not implemented | Clicks through instagram.com | Yes | High, same Terms issue, and breaks when the site changes |
 | D. Telegram bot (optional alternative) | `telegram` | Sends the reel links to your friend on Telegram, not Instagram | Yes, as links | None |
 | Dry run | `dry_run` (default) | Prints what it would send | n/a | None |
@@ -133,7 +133,7 @@ This is the main way to get reels into a friend's Instagram DMs. It has not been
    python -m reeldrop instagram-check --to your_second_account
    python -m reeldrop instagram-check --to your_second_account --send-test-text
    ```
-6. **Send one real reel to the same second account.** The output says whether it arrived as a native reel share or fell back to a link:
+6. **Send one real reel to the same second account.** The output says it arrived as a native reel share, or reports an error if the native share failed (nothing is sent as a link unless `IG_LINK_FALLBACK=1`):
    ```bash
    python -m reeldrop instagram-check --to your_second_account --reel "https://www.instagram.com/reel/XXXXXXXXXXX/"
    ```
@@ -144,6 +144,9 @@ Things to know:
 - The friend should follow the sending account, or accept it. Otherwise the DM can land under **Message requests**.
 - Reels from private accounts will not preview for the friend.
 - `instagram-check` sends nothing unless you pass `--send-test-text` or `--reel`, and both need `--to`.
+- The friend gets the actual reel, never a link. If Instagram does not accept the native share, that reel fails and stays unsent. Set `IG_LINK_FALLBACK=1` in `.env` only if you would rather send the link as text in that case.
+- If login fails with a message about a verification step (the library itself reports "your version of Instagram is out of date"), Instagram wants to verify the account. Log in once in the Instagram app and approve the login, turn on two-factor with an authenticator app, set `IG_TOTP_SECRET`, and try again. Do not retry repeatedly.
+- The command-line tool (`python -m reeldrop ...`) reads `.env` from the current folder, like the scheduler and dashboard.
 - If Instagram blocks or challenges the account, sending is paused automatically. Stop, clear the warning in the Instagram app, wait 24 to 48 hours, and lower `daily_cap`.
 - Telegram stays optional: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_MY_CHAT_ID` if you want alerts on your phone.
 
@@ -172,6 +175,7 @@ python -m reeldrop instagram-check [--to USER] [--send-test-text] [--reel URL]  
 | `IG_USERNAME`, `IG_PASSWORD` | Route B login (Instagram DMs) |
 | `IG_TOTP_SECRET` | Optional, recommended: base32 two-factor seed so the login code is generated automatically |
 | `IG_VERIFICATION_CODE` | Optional: one-time code if Instagram asks for one at login |
+| `IG_LINK_FALLBACK` | Optional, default off: `1` sends the reel link as text when the native reel share fails. Off means the reel is shared as a real reel or not sent |
 | `IG_ACCESS_TOKEN`, `IG_RECIPIENT_IGSID` | Route A |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_FRIEND_CHAT_ID` | Route D (optional: delivery over Telegram instead of Instagram) |
 | `TELEGRAM_MY_CHAT_ID` | Optional alerts to yourself (pause, empty queue, results) |
@@ -404,7 +408,7 @@ Set `TELEGRAM_CONTROL=1` in `.env` (plus `TELEGRAM_BOT_TOKEN` and `TELEGRAM_MY_C
 
 ### Automatic discovery (no pasted links)
 
-ReelDrop can find reels by itself instead of you pasting links. You list sources (hashtags, creators, or one of your saved collections). When fewer than `min_pending` reels are waiting, the scheduler fetches reels from those sources and adds them to the queue. Sending works exactly as before.
+ReelDrop can find reels by itself instead of you pasting links. You list sources (Instagram's Explore reels, hashtags, creators, or one of your saved collections). When fewer than `min_pending` reels are waiting, the scheduler fetches reels from those sources and adds them to the queue. Sending works exactly as before.
 
 **Requirements.** Discovery reads Instagram through `instagrapi`, so it needs `IG_USERNAME` / `IG_PASSWORD` in `.env`. Two setups work:
 
@@ -425,6 +429,8 @@ discovery:
   min_likes: 0
   delay_seconds: 5           # pause between sources
   sources:
+    - type: explore          # Instagram picks the reels; no search term needed
+      value: reels           # reels (Explore) | feed (the account's Reels feed)
     - type: hashtag
       value: funny
       mode: top              # top | recent
@@ -444,8 +450,8 @@ discovery:
 | `check_every_minutes` | 180 | At most one automatic refill per this many minutes (30 to 1440) |
 | `min_likes` | 0 | Skip reels with fewer likes than this |
 | `delay_seconds` | 5 | Pause between sources (0 to 120) |
-| `sources[].type` | | `hashtag`, `user` or `collection` |
-| `sources[].value` | | Hashtag without `#`, username without `@`, or the saved collection's name |
+| `sources[].type` | | `explore`, `hashtag`, `user` or `collection` |
+| `sources[].value` | | Hashtag without `#`, username without `@`, or the saved collection's name. For `explore`: `reels` (default, the Explore reels tab) or `feed` (the account's own Reels feed) |
 | `sources[].mode` | `top` | Hashtags only: `top` or `recent` |
 | `sources[].to` | none | Optional recipient. Reels from this source are only sent by the rule for that friend, like `add --to` |
 
@@ -463,7 +469,7 @@ python -m reeldrop discover              # run one refill now
 
 Run `discover --dry-run` first. The dashboard's **Discovery** tab shows the sources, last refill time and result, and pending versus `min_pending`. Its **Refill now** button sets a flag; the scheduler process (not the dashboard, which never logs in to Instagram) picks it up within about a minute.
 
-**Risks.** This uses Instagram's unofficial private API, which violates Instagram's Terms of Service. Accounts can be action-blocked or banned, and the library can break after an Instagram update. Use a test account only, keep `daily_cap` low, and stop if Instagram shows a warning. This feature has been tested with fakes only and has not been verified against live Instagram; the first run on your test account is the real test. See [reeldrop-plan/12-phase-8-auto-discovery.md](reeldrop-plan/12-phase-8-auto-discovery.md).
+**Risks.** This uses Instagram's unofficial private API, which violates Instagram's Terms of Service. Accounts can be action-blocked or banned, and the library can break after an Instagram update. Use a test account only, keep `daily_cap` low, and stop if Instagram shows a warning. On a live test account (2026-11-14, instagrapi 3.2.12) the `explore` source returned reels and a native reel DM was delivered, while the `hashtag` sources returned nothing, so prefer `explore`. `user` and `collection` sources have been tested with fakes only. See [reeldrop-plan/12-phase-8-auto-discovery.md](reeldrop-plan/12-phase-8-auto-discovery.md).
 
 ### Not implemented
 

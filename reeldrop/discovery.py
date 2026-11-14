@@ -1,4 +1,4 @@
-"""Auto-discovery: keep the queue topped up from hashtags, creators and collections (Route B).
+"""Auto-discovery: keep the queue topped up from Explore, hashtags, creators and collections (Route B).
 
 Pieces:
   * fetch_source()   one small function per source type (the only place that touches
@@ -80,10 +80,20 @@ def _fetch_collection(client, source, amount):
     return _fetch_medias(client, pk, amount)
 
 
+def _fetch_explore(client, source, amount):
+    # No search term: Instagram picks the reels. "reels" is the Explore reels tab and
+    # "feed" is the account's own Reels feed. Seen working on a live account (2026-11-14,
+    # instagrapi 3.2.12), when the hashtag endpoints returned nothing.
+    if source.value == "feed":
+        return client.reels(amount)
+    return client.explore_reels(amount)
+
+
 _FETCHERS = {
     "hashtag": _fetch_hashtag,
     "user": _fetch_user,
     "collection": _fetch_collection,
+    "explore": _fetch_explore,
 }
 
 

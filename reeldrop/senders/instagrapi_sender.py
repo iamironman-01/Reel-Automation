@@ -1,9 +1,11 @@
 """Instagram sender built on instagrapi: delivers reels as real Instagram DMs.
 
-send() first tries a native reel share (direct_media_share with media_type="video"; the
-library defaults to "photo", which is wrong for reels). If that raises a normal error or
-Instagram returns an empty message, it sends the reel link as text instead. Block and
-challenge errors are never retried: they become BlockedError so the job pauses.
+send() shares the reel natively (direct_media_share with media_type="video"; the library
+defaults to "photo", which is wrong for reels), so the friend gets the actual reel. If the
+native share raises a normal error or Instagram returns an empty message, send() fails and
+the reel is NOT sent as a link. Set IG_LINK_FALLBACK=1 to send the link as text instead in
+that case. Block and challenge errors are never retried: they become BlockedError so the
+job pauses.
 
 instagrapi is imported inside __init__ so this module can be imported (and tested with a
 fake) without the library installed. Error classes are matched by name, see base.py.
@@ -24,9 +26,31 @@ DELAY_RANGE = [2, 5]
 _TWO_FACTOR = frozenset({"TwoFactorRequired"})
 _BAD_LOGIN = frozenset({"BadPassword", "BadCredentials"})
 _NOT_FOUND = frozenset({"UserNotFound", "ClientNotFoundError"})
+_NEEDS_UPGRADE = frozenset({"ClientNeedsUpgradeError"})
+
+# Opt-in: send the reel link as text when the native share fails. Off by default, so a
+# reel is either shared as a real reel or not sent at all.
+LINK_FALLBACK_ENV = "IG_LINK_FALLBACK"
 
 TWO_FACTOR_HELP = ("Instagram asked for a two-factor code. Set IG_TOTP_SECRET (recommended) "
                    "or IG_VERIFICATION_CODE in .env and restart.")
+
+
+# instagrapi tries Instagram's current login flow first. When Instagram answers that flow
+# with a verification step the library cannot complete, it falls back to an old endpoint,
+# which only ever answers "your version of Instagram is out of date". That text is
+# misleading, so explain what is really needed.
+VERIFICATION_HELP = (
+    "Instagram did not complete the login (it answered 'app out of date', which usually "
+    "means it wants a verification step for this account). Log in to this account once in "
+    "the Instagram app and approve the login, turn on two-factor authentication with an "
+    "authenticator app and set IG_TOTP_SECRET in .env, then try again. Do not retry "
+    "repeatedly: failed logins can get the account flagged.")
+
+
+def link_fallback_enabled() -> bool:
+    """True if IG_LINK_FALLBACK asks for the link to be sent when the native share fails."""
+    return os.environ.get(LINK_FALLBACK_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _require_env(name: str) -> str:
@@ -123,6 +147,8 @@ class InstagrapiSender(Sender):
                 raise RuntimeError(TWO_FACTOR_HELP) from None
             if has_error_name(e, _BAD_LOGIN):
                 raise RuntimeError("Instagram rejected the username or password.") from None
+            if has_error_name(e, _NEEDS_UPGRADE):
+                raise RuntimeError(VERIFICATION_HELP) from None
             if is_block_error(e):
                 raise _blocked(e) from e
             raise
@@ -163,12 +189,16 @@ class InstagrapiSender(Sender):
                 if _delivered(message):
                     self.last_method = "native"
                     return
-                log.warning("Native reel share returned an empty message; sending link instead")
+                reason = "Instagram returned an empty message"
             except Exception as e:
                 if is_block_error(e):
                     raise
-                log.warning("Native reel share failed (%s: %s); sending link instead",
-                            type(e).__name__, _safe(e))
+                reason = f"{type(e).__name__}: {_safe(e)}"
+            if not link_fallback_enabled():
+                raise RuntimeError(
+                    f"Native reel share failed ({reason}). The reel was not sent. "
+                    f"Set {LINK_FALLBACK_ENV}=1 to send the link instead when this happens.")
+            log.warning("Native reel share failed (%s); sending link instead", reason)
             message = self.cl.direct_send(reel_url, [uid])
             if not _delivered(message):
                 raise RuntimeError("Instagram did not confirm the message was sent")

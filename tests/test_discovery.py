@@ -298,6 +298,58 @@ def test_fetch_collection_unknown_name():
         fetch_source(c, src("collection", "Nope"), 5)
 
 
+def test_fetch_explore_reels_and_feed():
+    c = FakeClient()
+    c.explore_reels = lambda amount: (c.calls.append(("explore_reels", amount)), [reel("A")])[1]
+    c.reels = lambda amount: (c.calls.append(("reels", amount)), [reel("B"), reel("C")])[1]
+    assert len(fetch_source(c, src("explore", "reels"), 6)) == 1
+    assert len(fetch_source(c, src("explore", "feed"), 4)) == 2
+    assert c.calls == [("explore_reels", 6), ("reels", 4)]
+
+
+def test_refill_from_explore_adds_only_reels(temp_db):
+    c = FakeClient()
+    c.explore_reels = lambda amount: [reel("EXP1"), photo("PHOTO"), reel("EXP1"), reel("EXP2")]
+    result = discovery.refill(disc(src("explore", "reels")), client=c)
+    assert len(result.added) == 2 and result.skipped == 1 and result.duplicates == 1
+    assert result.per_source == {"explore:reels": 2}
+    assert len(queued()) == 2
+
+
+def test_explore_block_raises_blocked_error(temp_db):
+    c = FakeClient()
+
+    def boom(amount):
+        raise ChallengeRequired("challenge")
+
+    c.explore_reels = boom
+    with pytest.raises(BlockedError):
+        discovery.refill(disc(src("explore", "reels")), client=c)
+
+
+def test_config_explore_source_defaults_and_values():
+    cfg = parse_config({"discovery": {"sources": [
+        {"type": "explore"}, {"type": "Explore", "value": " FEED "}]}})
+    assert cfg.discovery.sources == [
+        DiscoverySource("explore", "reels", "top", None),
+        DiscoverySource("explore", "feed", "top", None),
+    ]
+
+
+@pytest.mark.parametrize("bad", ["funny", "", 3])
+def test_config_explore_value_validated(bad):
+    with pytest.raises(ValueError, match="explore value must be one of|non-empty string"):
+        parse_config({"discovery": {"sources": [{"type": "explore", "value": bad}]}})
+
+
+def test_config_explore_rejects_mode_and_duplicates():
+    with pytest.raises(ValueError, match="mode only applies to hashtag"):
+        parse_config({"discovery": {"sources": [{"type": "explore", "mode": "top"}]}})
+    with pytest.raises(ValueError, match="duplicate source explore:reels"):
+        parse_config({"discovery": {"sources": [{"type": "explore"},
+                                                {"type": "explore", "value": "reels"}]}})
+
+
 def test_fetch_source_none_result_is_empty_list():
     c = FakeClient()
     c.hashtag_medias_top = lambda name, amount: None
