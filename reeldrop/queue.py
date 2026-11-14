@@ -1,7 +1,6 @@
 import re
-import sqlite3
 
-from .db import connect, now
+from .db import INTEGRITY_ERRORS, begin_write, connect, now
 
 # Accepts instagram.com/{reel,reels,p}/<shortcode> with an optional scheme,
 # www./m. prefix, optional username segment, and trailing path/query/fragment.
@@ -31,13 +30,14 @@ def add_reel(url: str, note: str = "", recipient: str | None = None) -> int:
     try:
         with connect() as c:
             # position is computed inside the INSERT, so it is atomic with it
-            cur = c.execute(
+            row = c.execute(
                 "INSERT INTO reels (url, shortcode, note, added_at, recipient, position) "
-                "VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM reels))",
+                "VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM reels)) "
+                "RETURNING id",
                 (clean_url, shortcode, note, now(), _clean_recipient(recipient)),
-            )
-            return cur.lastrowid
-    except sqlite3.IntegrityError:
+            ).fetchone()
+            return row[0]
+    except INTEGRITY_ERRORS:
         raise ValueError("This reel is already in the queue") from None
 
 
@@ -75,14 +75,14 @@ def next_pending(n: int, order: str = "oldest", recipient: str | None = None):
     where = "status='pending'"
     params: list = []
     if recipient is not None:
-        where += " AND (recipient IS NULL OR recipient = ? COLLATE NOCASE)"
+        where += " AND (recipient IS NULL OR LOWER(recipient) = LOWER(?))"
         params.append(recipient.strip())
     if order == "oldest":
         sql = f"SELECT * FROM reels WHERE {where} ORDER BY COALESCE(position, id), id LIMIT ?"
     else:
         # pick at random, then return the picked rows in a stable (id) order
         sql = (f"SELECT * FROM (SELECT * FROM reels WHERE {where} "
-               "ORDER BY RANDOM() LIMIT ?) ORDER BY id")
+               "ORDER BY RANDOM() LIMIT ?) AS picked ORDER BY id")
     params.append(n)
     with connect() as c:
         return c.execute(sql, params).fetchall()
@@ -139,7 +139,7 @@ def move_reel(reel_id: int, direction: str) -> bool:
     if direction not in MOVE_DIRECTIONS:
         raise ValueError(f"direction must be one of {', '.join(MOVE_DIRECTIONS)}, got {direction!r}")
     with connect() as c:
-        c.execute("BEGIN IMMEDIATE")   # take the write lock before reading the order
+        begin_write(c)                 # take the write lock before reading the order
         rows = c.execute(
             "SELECT id, COALESCE(position, id) AS pos FROM reels WHERE status='pending' "
             "ORDER BY COALESCE(position, id), id"

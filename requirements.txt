@@ -6,3 +6,5 @@ requests>=2.31,<3
 streamlit>=1.30,<2
 pandas>=2,<3
 instagrapi>=3.2,<4        # only needed for Route B; needs Python 3.11+
+psycopg[binary]>=3.2,<4  # PostgreSQL / Supabase, used only when DATABASE_URL is set
+psycopg-pool>=3.2,<4

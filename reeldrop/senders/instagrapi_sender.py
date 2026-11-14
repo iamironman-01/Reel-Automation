@@ -83,6 +83,45 @@ def seed_session_from_env(path: Path | None = None) -> bool:
     return True
 
 
+def seed_session_from_db(path: Path | None = None) -> bool:
+    """Write the session file from the shared database (DATABASE_URL) if it is missing.
+
+    The newest login is stored there after every successful start, so a restart on a
+    host without a disk reuses it. Returns True if a file was written. Never raises.
+    """
+    path = Path(path or SESSION)
+    try:
+        from .. import db, settings
+        if not db.keeps_state() or path.exists():
+            return False
+        value = settings.get(settings.SESSION_KEY)
+        if not value:
+            return False
+        from ..dashboard_helpers import save_session_file
+        save_session_file(value.encode("utf-8"), str(path))
+    except Exception as e:  # a bad stored value must not stop the login
+        log.warning("Could not restore the Instagram session from the database: %s",
+                    type(e).__name__)
+        return False
+    log.info("Instagram session restored from the database")
+    return True
+
+
+def store_session_in_db(path: Path | None = None) -> bool:
+    """Copy the session file into the shared database (DATABASE_URL). Never raises."""
+    path = Path(path or SESSION)
+    try:
+        from .. import db, settings
+        if not db.keeps_state() or not path.exists():
+            return False
+        settings.set_(settings.SESSION_KEY, path.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning("Could not save the Instagram session to the database: %s",
+                    type(e).__name__)
+        return False
+    return True
+
+
 def _require_env(name: str) -> str:
     value = os.environ.get(name, "")
     if not value.strip():
@@ -129,7 +168,7 @@ class InstagrapiSender(Sender):
         self.cl = Client()
         self.cl.delay_range = list(DELAY_RANGE)
         self._session_loaded = False
-        seed_session_from_env(SESSION)
+        seed_session_from_db(SESSION) or seed_session_from_env(SESSION)
         if SESSION.exists():
             try:
                 self.cl.load_settings(SESSION)   # reuse device + cookies
@@ -140,6 +179,7 @@ class InstagrapiSender(Sender):
         self._login(username, password)
         SESSION.parent.mkdir(parents=True, exist_ok=True)
         self.cl.dump_settings(SESSION)           # save for next start
+        store_session_in_db(SESSION)             # and for the next container (DATABASE_URL)
 
     # --- login -----------------------------------------------------------------
 

@@ -294,6 +294,20 @@ def save_schedules(
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise
+    remember_schedule(new_text)
+
+
+def remember_schedule(text: str) -> bool:
+    """Also keep the saved schedule in the shared database (DATABASE_URL) so it survives
+    a restart on a host without a disk. Never raises; returns True if stored."""
+    try:
+        from reeldrop import db, settings
+        if not db.keeps_state():
+            return False
+        settings.set_(settings.SCHEDULES_KEY, text)
+    except Exception:
+        return False
+    return True
 
 
 # --- sender status and Instagram session ------------------------------------
@@ -421,5 +435,33 @@ def test_send_status(get_setting: Callable[..., object]) -> dict:
         "requested": get_setting(TEST_SEND_REQUEST_KEY, "0") == "1",
         "result": str(get_setting(TEST_SEND_RESULT_KEY, "") or ""),
         "at": str(get_setting(TEST_SEND_AT_KEY, "") or ""),
+    }
+
+
+# --- scheduler heartbeat -----------------------------------------------------------
+
+HEARTBEAT_KEY = "scheduler_heartbeat"
+OWNER_KEY = "scheduler_owner"
+HEARTBEAT_FRESH_SECONDS = 90
+
+
+def seconds_since(stamp, now_text) -> float | None:
+    """Seconds between two "YYYY-MM-DD HH:MM:SS" stamps (None if either is unreadable)."""
+    try:
+        then = datetime.strptime(str(stamp), "%Y-%m-%d %H:%M:%S")
+        current = datetime.strptime(str(now_text), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+    return (current - then).total_seconds()
+
+
+def scheduler_status(get_setting: Callable[..., object], now_text: str) -> dict:
+    """Is the scheduler (the part that sends) alive? Based on its heartbeat."""
+    beat = get_setting(HEARTBEAT_KEY, None)
+    age = seconds_since(beat, now_text) if beat else None
+    return {
+        "running": age is not None and age <= HEARTBEAT_FRESH_SECONDS,
+        "last_seen": str(beat or ""),
+        "owner": str(get_setting(OWNER_KEY, "") or ""),
     }
 

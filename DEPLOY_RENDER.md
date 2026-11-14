@@ -13,6 +13,21 @@ One **web service** runs the dashboard and the scheduler together (`start.py`). 
 
 Because the history is wiped, the daily cap starts again from 0 after a restart, and a reel sent before a restart may be found and sent again. For an always-on service that keeps its data, change `plan: free` to `plan: starter` (about $7/month) and add a 1 GB disk at `/app/data` (the comment at the top of `render.yaml` shows the lines).
 
+### Keep the data in Supabase (recommended)
+
+With `DATABASE_URL` set, everything is stored in a free Supabase PostgreSQL database instead of the container's disk: the queue, the send history (so the daily cap is right and no reel is sent twice after a restart), the pause switch, your friends and schedule (saved there by every dashboard change), and the Instagram login (saved after every successful start). Nothing is lost on a restart, so `IG_SESSION_B64` and `SCHEDULES_B64` are only needed for the very first start, or not at all.
+
+1. Create a free project at [supabase.com](https://supabase.com) (pick a region near you, e.g. Mumbai). Note the database password you choose.
+2. Open **Connect** (top of the project page) and copy the **Session pooler** connection string. It looks like `postgresql://postgres.<project-ref>:[YOUR-PASSWORD]@aws-0-<region>.pooler.supabase.com:5432/postgres`. Put your database password in place of `[YOUR-PASSWORD]`. Use the session pooler: the "direct connection" needs IPv6, which Render's free plan does not have.
+3. In Render, add it as the environment variable `DATABASE_URL` and save.
+4. After the restart the dashboard shows **Storage: Supabase / PostgreSQL**. ReelDrop creates its three tables (`reels`, `send_log`, `settings`) by itself.
+
+Treat `DATABASE_URL` like a password: it contains the database password, and the `settings` table holds the Instagram login cookies. Do not add it to the public repository.
+
+**Run the scheduler in one place only.** If your PC and Render both use the same `DATABASE_URL`, both would send. The scheduler refuses to start while another one is active on the same database (the dashboard says so), so stop the local one, or leave `DATABASE_URL` out of your local `.env`.
+
+Supabase pauses free projects after a week without any activity. ReelDrop writes to it every 20 seconds while it runs, so this only happens if the service is stopped for a week.
+
 ### Keep it awake
 
 This is built in. Render gives every web service its public address in `RENDER_EXTERNAL_URL`, and `start.py` requests `<that address>/_stcore/health` every 9 minutes, which counts as inbound traffic, so the service never reaches 15 idle minutes. The Render log shows `[keep-alive] pinging ... every 9 minutes` at start.
@@ -73,6 +88,7 @@ Code is deployed from the **`render-deploy`** branch. `main` is not used for dep
    | `IG_USERNAME` | the sending account's username |
    | `IG_PASSWORD` | its password |
    | `IG_TOTP_SECRET` | the two-factor setup key |
+   | `DATABASE_URL` | your Supabase session pooler connection string (see above) |
    | `IG_SESSION_B64` | your saved login (see above) |
 | `SCHEDULES_B64` | your friends, times and sources (see above; can be added after the first deploy) |
    | `STORAGE_IS_EPHEMERAL` | `1` |

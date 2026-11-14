@@ -1,3 +1,4 @@
+import os
 """Phase 7: multiple friends (reels.recipient) and queue reorder (reels.position)."""
 import sqlite3
 
@@ -46,6 +47,11 @@ CREATE TABLE send_log (
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
 """
 
+
+
+# Tests that check SQLite itself; skipped when the suite runs on PostgreSQL.
+SQLITE_ONLY = pytest.mark.skipif(bool(os.environ.get("TEST_DATABASE_URL")),
+                                 reason="checks SQLite specifics")
 
 def url(i):
     return f"https://www.instagram.com/reel/R{i:03d}/"
@@ -134,6 +140,7 @@ def test_fresh_and_migrated_schemas_have_same_columns(old_db, tmp_path, monkeypa
     assert set(fresh) >= {"recipient", "position"}
 
 
+@SQLITE_ONLY
 def test_fresh_db_has_index(temp_db):
     with db.connect() as c:
         idx = [r["name"] for r in c.execute("PRAGMA index_list(reels)")]
@@ -576,3 +583,12 @@ def test_messages():
     assert "unassigned" in recipient_message(3, "", True)
     assert "unassigned" in recipient_message(3, None, True)
     assert "No reel" in recipient_message(3, "alice", False)
+
+
+@pytest.mark.skipif(not os.environ.get("TEST_DATABASE_URL"), reason="needs PostgreSQL")
+def test_fresh_postgres_db_has_index(temp_db):
+    with db.connect() as c:
+        names = [r[0] for r in c.execute(
+            "SELECT indexname FROM pg_indexes WHERE tablename = 'reels'").fetchall()]
+    assert "idx_reels_status_position" in names
+

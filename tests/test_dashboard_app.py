@@ -35,6 +35,9 @@ def app(tmp_path, monkeypatch, temp_db):
     monkeypatch.delenv("DASHBOARD_PUBLIC", raising=False)
     for name in ("IG_USERNAME", "IG_PASSWORD", "IG_TOTP_SECRET"):
         monkeypatch.setenv(name, "")
+    from reeldrop import db, settings
+    settings.set_("scheduler_heartbeat", db.now())     # a live scheduler, as on a real host
+    settings.set_("scheduler_owner", "test-host")
     at = AppTest.from_file(str(ROOT / "dashboard.py"), default_timeout=60)
     at.run()
     return at, live
@@ -268,3 +271,30 @@ def test_no_password_set_and_no_switch_is_refused(app, monkeypatch):
     at.run()
     assert any("DASHBOARD_PASSWORD is not set" in e.value for e in at.error)
     assert len(at.tabs) == 0
+
+
+def test_missing_scheduler_is_reported(app):
+    from reeldrop import settings
+
+    at, _ = app
+    settings.set_("scheduler_heartbeat", "2026-01-01 08:00:00")   # long ago
+    log_in(at)
+    assert any("scheduler (the part that sends reels) is not running" in e.value
+               and "1 Jan 2026, 8:00 AM" in e.value for e in at.error)
+
+
+def test_scheduler_never_started_is_reported(app):
+    from reeldrop import settings
+
+    at, _ = app
+    settings.set_("scheduler_heartbeat", "")
+    log_in(at)
+    assert any("it has not started yet" in e.value for e in at.error)
+
+
+@pytest.mark.skipif(bool(os.environ.get("TEST_DATABASE_URL")), reason="checks SQLite")
+def test_storage_line_shows_local_file(app):
+    at, _ = app
+    log_in(at)
+    assert any("Storage: local file" in c.value for c in at.caption)
+

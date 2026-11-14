@@ -237,10 +237,60 @@ def send_test_reels(cfg, sender, runner=None, sleep=None, paused=None) -> str:
     return "; ".join(parts)
 
 
+HEARTBEAT_KEY = "scheduler_heartbeat"          # read by the dashboard
+OWNER_KEY = "scheduler_owner"
+HEARTBEAT_FRESH_SECONDS = 90
+OTHER_SCHEDULER_WAIT_SECONDS = 60
+
+
+def instance_id(env=None) -> str:
+    """Who this scheduler is: the Render instance, or this computer's name.
+
+    The computer name (not the process id) lets a restarted scheduler on the same
+    machine take over at once instead of waiting for its own old heartbeat to expire.
+    """
+    import socket
+    env = env if env is not None else os.environ
+    return env.get("RENDER_INSTANCE_ID") or f"host:{socket.gethostname()}"
+
+
+def write_heartbeat(owner=None) -> None:
+    """Record that this scheduler is alive. Never raises."""
+    try:
+        from reeldrop.db import now
+        from reeldrop.settings import set_
+        set_(HEARTBEAT_KEY, now())
+        set_(OWNER_KEY, owner or instance_id())
+    except Exception as e:
+        log.warning("Could not write the scheduler heartbeat: %s", type(e).__name__)
+
+
+def other_scheduler_running(me=None) -> str | None:
+    """The id of another live scheduler using this database, or None.
+
+    Two schedulers on one shared database (for example your PC and Render, both with
+    the same DATABASE_URL) would each send the same reels. Never raises.
+    """
+    try:
+        from reeldrop.dashboard_helpers import seconds_since
+        from reeldrop.db import now
+        from reeldrop.settings import get
+        owner = get(OWNER_KEY)
+        age = seconds_since(get(HEARTBEAT_KEY), now())
+    except Exception:
+        return None
+    if owner and owner != (me or instance_id()) and age is not None \
+            and 0 <= age <= HEARTBEAT_FRESH_SECONDS:
+        return owner
+    return None
+
+
 def check_test_send_request(sender, path=None, loader=None, runner=None, sleep=None):
-    """Scheduler job: if the dashboard asked for a test send, run it once and record it."""
+    """Scheduler job (every 20 s): heartbeat, then run a requested test send once."""
     from reeldrop.db import now
     from reeldrop.settings import get, set_
+
+    write_heartbeat()
 
     try:
         if get(TEST_SEND_REQUEST_KEY, "0") != "1":
@@ -342,6 +392,16 @@ def wait_before_exit(sender_name: str, sleep=time.sleep, env=None, requested=Non
 def main():
     setup_logging()
     init_db()
+    other = other_scheduler_running()
+    if other:
+        log.error("Another scheduler (%s) is already running against this database. "
+                  "Run ReelDrop in one place only, or the same reels are sent twice. "
+                  "Exiting in %d seconds.", other, OTHER_SCHEDULER_WAIT_SECONDS)
+        record_sender_error(f"Not started: another scheduler ({other}) is already running "
+                            "against this database. Stop it, or use a different DATABASE_URL.")
+        time.sleep(OTHER_SCHEDULER_WAIT_SECONDS)
+        sys.exit(1)
+    write_heartbeat()
     try:
         ensure_schedules_file()       # first start on a fresh disk: seed from the shipped default
     except OSError as e:
@@ -353,6 +413,7 @@ def main():
     except Exception as e:
         log.error("Invalid config: %s", e)
         sys.exit(1)
+
 
     sender_name = os.getenv("SENDER", "dry_run")
     try:

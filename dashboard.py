@@ -2,7 +2,6 @@
 import base64
 import datetime
 import os
-import sqlite3
 
 import pandas as pd
 import streamlit as st
@@ -30,6 +29,7 @@ from reeldrop.dashboard_helpers import (
     request_refill_message,
     save_schedules,
     save_session_file,
+    scheduler_status,
     sender_status,
     split_12h,
     test_send_status,
@@ -38,7 +38,7 @@ from reeldrop.dashboard_helpers import (
     timestamp_12h,
     weekly_counts,
 )
-from reeldrop.db import connect, init_db
+from reeldrop.db import DB_ERRORS, connect, init_db, read_rows, using_postgres
 from reeldrop.queue import (
     MOVE_DIRECTIONS,
     add_reel,
@@ -85,7 +85,7 @@ if not PUBLIC and not st.session_state.get("ok"):
 # --- startup: database and config ---
 try:
     init_db()
-except (sqlite3.Error, OSError) as e:
+except (*DB_ERRORS, OSError) as e:
     st.error(f"Cannot open the database: {e}")
     st.stop()
 
@@ -142,6 +142,11 @@ def time_picker(value_24h: str, key: str):
     return picked_hour, picked_minute, picked_am_pm
 
 
+def frame(columns, rows):
+    """A DataFrame from read_rows() output (works with SQLite and PostgreSQL)."""
+    return pd.DataFrame([tuple(r) for r in rows], columns=columns)
+
+
 def show_times_12h(df, columns):
     """Copy of `df` with the named timestamp columns shown in 12-hour time."""
     out = df.copy()
@@ -170,7 +175,9 @@ try:
         ).fetchone()[0]
     paused = is_paused()
     send_state = sender_status(get_setting)
-except sqlite3.Error as e:
+    from reeldrop.db import now as db_now
+    sched_state = scheduler_status(get_setting, db_now())
+except DB_ERRORS as e:
     st.error(f"Database error: {e}")
     st.stop()
 
@@ -181,6 +188,18 @@ c2.metric("In queue", pending)
 c3.metric("Status", "⛔ Paused" if paused else "✅ Running")
 c4.metric("Sender", sender_name)
 
+if not sched_state["running"]:
+    st.error(
+        "The scheduler (the part that sends reels) is not running"
+        + (f" - last seen {timestamp_12h(sched_state['last_seen'])}"
+           if sched_state["last_seen"] else " - it has not started yet")
+        + ". Nothing is sent and test sends wait until it runs. Check the Render log."
+    )
+st.caption(
+    "Storage: " + ("Supabase / PostgreSQL (kept across restarts)" if using_postgres()
+                   else "local file (data/reeldrop.db)")
+    + (f" · Scheduler: running ({sched_state['owner']})" if sched_state["running"] else "")
+)
 if send_state["error"]:
     st.error(
         f"The scheduler could not start its sender ({timestamp_12h(send_state['at']) or 'time unknown'}), "
@@ -226,7 +245,7 @@ with t_friends:
         st.subheader("Test: send one reel to every friend now")
         try:
             test_state = test_send_status(get_setting)
-        except sqlite3.Error as e:
+        except DB_ERRORS as e:
             st.error(f"Could not read the test send status: {e}")
             test_state = None
         if test_state is not None:
@@ -240,10 +259,13 @@ with t_friends:
             if test_state["requested"]:
                 st.info("A test send is requested and waiting for the scheduler. "
                         "Reload this page in a minute to see the result.")
+                if not sched_state["running"]:
+                    st.warning("The scheduler is not running, so the test cannot run yet "
+                               "(see the red message at the top).")
             elif st.button("Send a test reel to every friend", disabled=not known_friends):
                 try:
                     set_setting(TEST_SEND_REQUEST_KEY, "1")
-                except sqlite3.Error as e:
+                except DB_ERRORS as e:
                     st.error(f"Could not request the test send: {e}")
                 else:
                     st.session_state["flash"] = ("Test send requested for "
@@ -337,7 +359,7 @@ with t_topics:
         (st.warning if level == "warning" else st.info)(msg)
     try:
         disc = discovery_status(get_setting, disc_cfg)
-    except sqlite3.Error as e:
+    except DB_ERRORS as e:
         st.error(f"Could not read discovery status: {e}")
         disc = None
     if disc is not None:
@@ -358,7 +380,7 @@ with t_topics:
                 level, msg = request_refill_message(disc["enabled"], disc["refill_pending"])
                 if disc["enabled"] and not disc["refill_pending"]:
                     set_setting("discovery_refill_requested", "1")
-            except sqlite3.Error as e:
+            except DB_ERRORS as e:
                 st.error(f"Could not request a refill: {e}")
             else:
                 st.session_state["discovery_flash"] = (level, msg)
@@ -465,8 +487,8 @@ with t_queue:
     try:
         sql, params = queue_query(status)
         with connect() as c:
-            df = pd.read_sql_query(sql, c, params=params)
-    except sqlite3.Error as e:
+            df = frame(*read_rows(c, sql, params))
+    except DB_ERRORS as e:
         st.error(f"Could not read the queue: {e}")
         df = None
     if df is not None:
@@ -483,7 +505,7 @@ with t_queue:
             if st.button("Remove"):
                 try:
                     delete_reel(int(rid))
-                except sqlite3.Error as e:
+                except DB_ERRORS as e:
                     st.error(f"Could not remove reel #{rid}: {e}")
                 else:
                     st.session_state["flash"] = f"Removed reel #{rid}"
@@ -498,7 +520,7 @@ with t_queue:
             if st.button("Set friend"):
                 try:
                     found = set_recipient(int(r_id), new_to)
-                except sqlite3.Error as e:
+                except DB_ERRORS as e:
                     st.error(f"Could not update reel #{r_id}: {e}")
                 else:
                     if found:
@@ -523,7 +545,7 @@ with t_queue:
                     if col.button(labels[direction], key=f"move_{direction}"):
                         try:
                             moved = move_reel(int(m_id), direction)
-                        except sqlite3.Error as e:
+                        except DB_ERRORS as e:
                             st.error(f"Could not move reel #{m_id}: {e}")
                         else:
                             if moved:
@@ -559,12 +581,10 @@ with t_add:
 with t_hist:
     try:
         with connect() as c:
-            log = pd.read_sql_query(
-                "SELECT * FROM send_log ORDER BY id DESC LIMIT 200", c
-            )
+            log = frame(*read_rows(c, "SELECT * FROM send_log ORDER BY id DESC LIMIT 200"))
         st.dataframe(show_times_12h(log, ["sent_at"]), use_container_width=True,
                      hide_index=True)
-    except sqlite3.Error as e:
+    except DB_ERRORS as e:
         st.error(f"Could not read history: {e}")
 
 # --- Stats ---
@@ -574,7 +594,7 @@ with t_stats:
             daily = daily_counts(c, days=30)
             weekly = weekly_counts(c, weeks=12)
             rate = failure_rate(c)
-    except sqlite3.Error as e:
+    except DB_ERRORS as e:
         st.error(f"Could not read stats: {e}")
     else:
         m1, m2, m3 = st.columns(3)
@@ -637,7 +657,7 @@ with t_set:
         elif st.button("Retry login now"):
             try:
                 set_setting(SENDER_RETRY_KEY, "1")
-            except sqlite3.Error as e:
+            except DB_ERRORS as e:
                 st.error(f"Could not request a retry: {e}")
             else:
                 st.session_state["flash"] = "Retry requested. Reload this page in a minute."

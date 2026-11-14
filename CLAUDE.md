@@ -30,7 +30,7 @@ sources / pasted links ─► reels table (SQLite) ─► scheduler rule fires �
 
 | File | Role |
 |------|------|
-| `reeldrop/db.py` | `connect()`, schema, in-place migration. `DB_PATH` is relative: `data/reeldrop.db` |
+| `reeldrop/db.py` | `connect()`, schema, in-place migration. SQLite at `DB_PATH` (`data/reeldrop.db`), or PostgreSQL (Supabase) when `DATABASE_URL` is set |
 | `reeldrop/queue.py` | add / pick / mark sent or failed / reorder / recipients / `sent_today` |
 | `reeldrop/config.py` | `parse_config(dict)` validates; `load_config()` reads YAML. Path from `SCHEDULES_PATH` |
 | `reeldrop/job.py` | what runs when a rule fires: pause, quiet day, daily cap, pick, top-up, send, retry |
@@ -56,7 +56,10 @@ sources / pasted links ─► reels table (SQLite) ─► scheduler rule fires �
 
 ## Conventions and gotchas
 
-- `with connect() as c:` commits or rolls back **and closes** the connection (`_Connection.__exit__`). Do not use a connection after the block.
+- `with connect() as c:` commits or rolls back **and closes** the connection. Do not use a connection after the block.
+- **Two databases, one SQL.** Write SQL with `?` placeholders and syntax both SQLite and PostgreSQL accept: `RETURNING id` (not `lastrowid`), `LOWER(a) = LOWER(?)` (not `COLLATE NOCASE`), an alias on every subquery, `db.begin_write(c)` (not `BEGIN IMMEDIATE`), `db.read_rows` + DataFrame (not `pandas.read_sql_query`), and catch `db.DB_ERRORS` / `db.INTEGRITY_ERRORS` (not `sqlite3.*`). Run the suite on PostgreSQL with `TEST_DATABASE_URL` (a throwaway database; CI job `test-postgres` does this).
+- With `DATABASE_URL`, `db.keeps_state()` is true: the Instagram session (`settings.SESSION_KEY`) and the schedule (`settings.SCHEDULES_KEY`) are also kept in the database and restored when the local file is missing. Tests set `DATABASE_URL` to `""` (conftest) so a real `.env` can never point them at Supabase.
+- The scheduler writes a heartbeat (`scheduler_heartbeat`, `scheduler_owner`) every 20 s from the `__test_send__` job; the dashboard shows a red message when it is older than 90 s. At start the scheduler refuses to run while another owner's heartbeat is fresh, so two schedulers never share one database.
 - `reeldrop/queue.py` shadows the stdlib module name only if the package directory is itself on `sys.path`. Keep using relative imports inside the package.
 - `instagrapi` is pinned `>=3.2,<4`. Reels must be shared with `media_type="video"`; the library default is `"photo"`, which does not share a reel properly.
 - `InstagrapiSender.send` never sends a link unless `IG_LINK_FALLBACK=1`: a failed native share is an error and the reel stays unsent. Do not make the link fallback the default again.

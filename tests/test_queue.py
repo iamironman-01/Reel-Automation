@@ -1,3 +1,4 @@
+import os
 import sqlite3
 
 import pytest
@@ -13,6 +14,11 @@ from reeldrop.queue import (
     sent_today,
 )
 
+
+
+# Tests that check SQLite itself; skipped when the suite runs on PostgreSQL.
+SQLITE_ONLY = pytest.mark.skipif(bool(os.environ.get("TEST_DATABASE_URL")),
+                                 reason="checks SQLite specifics")
 
 def _log_rows():
     with db.connect() as c:
@@ -115,7 +121,7 @@ def test_mark_sent_is_atomic(temp_db, monkeypatch):
     rid = add_reel("https://www.instagram.com/reel/AAA/")
     with db.connect() as c:
         c.execute("DROP TABLE send_log")
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(db.DB_ERRORS):
         mark_sent(rid, "bob", "r", "dry_run")
     assert list_reels()[0]["status"] == "pending"
 
@@ -161,6 +167,7 @@ def test_sent_today_uses_tz_name(temp_db, monkeypatch):
     assert sent_today() == 1
 
 
+@SQLITE_ONLY
 def test_connect_row_factory_and_closes(temp_db):
     with db.connect() as c:
         assert c.row_factory is sqlite3.Row
@@ -178,11 +185,12 @@ def test_connect_closes_on_exception_and_rolls_back(temp_db):
                 "INSERT INTO reels (url, shortcode, added_at) VALUES ('u', 's', 'now')"
             )
             raise RuntimeError("boom")
-    with pytest.raises(sqlite3.ProgrammingError):
+    with pytest.raises(db.DB_ERRORS):              # released on exit
         c.execute("SELECT 1")
     assert list_reels() == []
 
 
+@SQLITE_ONLY
 def test_connect_pragmas(temp_db):
     with db.connect() as c:
         assert c.execute("PRAGMA busy_timeout").fetchone()[0] == db.BUSY_TIMEOUT_MS

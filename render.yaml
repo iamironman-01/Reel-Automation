@@ -60,6 +60,8 @@ services:
         sync: false
       - key: IG_VERIFICATION_CODE    # optional one-time code
         sync: false
+      - key: DATABASE_URL            # Supabase session pooler URL: keeps all data across restarts
+        sync: false
       - key: IG_SESSION_B64          # base64 of a working data/session.json (free plan)
         sync: false
       - key: SCHEDULES_B64           # base64 of your schedules.yaml (friends stay private)

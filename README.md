@@ -196,6 +196,7 @@ python -m reeldrop instagram-check [--to USER] [--send-test-text] [--reel URL]  
 | `IG_TOTP_SECRET` | Optional, recommended: base32 two-factor seed so the login code is generated automatically |
 | `IG_VERIFICATION_CODE` | Optional: one-time code if Instagram asks for one at login |
 | `IG_LINK_FALLBACK` | Optional, default off: `1` sends the reel link as text when the native reel share fails. Off means the reel is shared as a real reel or not sent |
+| `DATABASE_URL` | Optional: a PostgreSQL connection string (for example Supabase's session pooler). When set, the queue, history, settings, the schedule and the Instagram login are stored there instead of `data/reeldrop.db`, so they survive restarts on hosts without a disk. Only one scheduler may use a database at a time |
 | `IG_SESSION_B64` | Optional: base64 copy of a working `data/session.json`. Written back to that file at start when the file is missing, for hosts without a disk such as Render's free plan. Treat it like a password |
 | `SCHEDULES_B64` | Optional: base64 copy of a whole `schedules.yaml`. Written to the live schedule file at start when that file is missing (hosts without a disk), so friends stay out of the repository. The dashboard's Advanced tab shows the code when `STORAGE_IS_EPHEMERAL=1`. An invalid value is ignored and the shipped default is used |
 | `STORAGE_IS_EPHEMERAL` | Optional: `1` makes the dashboard warn that its changes are lost on restart (set in `render.yaml` for the free plan) |

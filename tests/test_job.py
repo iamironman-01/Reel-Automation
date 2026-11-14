@@ -631,3 +631,48 @@ def test_real_runner_sends_a_test_reel_end_to_end(main_mod, temp_db, monkeypatch
     assert sorted(r for r, _ in sent) == ["buddy", "pal"]
     assert len({u for _, u in sent}) == 2                    # different reels, none twice
     assert [r["status"] for r in q.list_reels()] == ["sent", "sent"]
+
+
+# --- heartbeat and the one-scheduler guard ------------------------------------------
+
+def test_heartbeat_and_owner(main_mod, temp_db):
+    from reeldrop import settings
+    main_mod.write_heartbeat("me-1")
+    assert settings.get(main_mod.OWNER_KEY) == "me-1"
+    assert settings.get(main_mod.HEARTBEAT_KEY)
+    assert main_mod.other_scheduler_running("me-1") is None     # it is us
+    assert main_mod.other_scheduler_running("me-2") == "me-1"   # someone else, fresh
+
+
+def test_stale_heartbeat_from_another_scheduler_is_ignored(main_mod, temp_db):
+    from reeldrop import settings
+    settings.set_(main_mod.OWNER_KEY, "old-host")
+    settings.set_(main_mod.HEARTBEAT_KEY, "2026-01-01 00:00:00")
+    assert main_mod.other_scheduler_running("me") is None
+
+
+def test_instance_id_prefers_render(main_mod):
+    assert main_mod.instance_id({"RENDER_INSTANCE_ID": "srv-abc"}) == "srv-abc"
+    import socket
+    assert main_mod.instance_id({}) == f"host:{socket.gethostname()}"
+    assert main_mod.instance_id({}) == main_mod.instance_id({})   # stable across restarts
+
+
+def test_test_send_job_writes_the_heartbeat(main_mod, temp_db):
+    from reeldrop import settings
+    main_mod.check_test_send_request(object(), loader=lambda p: None)
+    assert settings.get(main_mod.HEARTBEAT_KEY)
+
+
+def test_main_refuses_to_start_next_to_another_scheduler(main_mod, temp_db, monkeypatch):
+    from reeldrop import settings
+    settings.set_(main_mod.OWNER_KEY, "other-host")
+    from reeldrop.db import now
+    settings.set_(main_mod.HEARTBEAT_KEY, now())
+    slept = []
+    monkeypatch.setattr(main_mod.time, "sleep", slept.append)
+    monkeypatch.setattr(main_mod, "get_sender", lambda name: pytest.fail("must not log in"))
+    with pytest.raises(SystemExit):
+        main_mod.main()
+    assert slept == [main_mod.OTHER_SCHEDULER_WAIT_SECONDS]
+    assert "another scheduler (other-host)" in settings.get("sender_error")

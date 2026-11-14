@@ -395,19 +395,41 @@ def schedules_from_env(env=None) -> str | None:
     return text
 
 
+def schedules_from_db() -> str | None:
+    """The schedule saved in the shared database (DATABASE_URL), if valid, else None."""
+    try:
+        from . import db, settings
+        if not db.keeps_state():
+            return None
+        text = settings.get(settings.SCHEDULES_KEY)
+        if not text:
+            return None
+        import yaml
+        parse_config(yaml.safe_load(text))
+    except Exception as e:
+        _log.warning("Ignoring the schedule saved in the database: %s", type(e).__name__)
+        return None
+    return text
+
+
 def ensure_schedules_file(default: str = DEFAULT_SCHEDULES_PATH, env=None) -> str:
     """Make sure the live schedule file exists, seeding it when it is missing.
 
     On a host where the image is rebuilt on every deploy (e.g. Render), edits made in
     the dashboard must live outside the image. When the live file is missing it is
-    written from SCHEDULES_B64 if that holds a valid schedule, otherwise copied from the
-    shipped default. An existing live file is never touched.
+    written from the schedule saved in the database (DATABASE_URL), else from
+    SCHEDULES_B64, else copied from the shipped default. An existing live file is never
+    touched.
     """
     target = schedules_path() if env is None else (env.get("SCHEDULES_PATH")
                                                   or DEFAULT_SCHEDULES_PATH)
     if not os.path.exists(target) and os.path.abspath(target) != os.path.abspath(default):
         os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
-        text = schedules_from_env(env)
+        text = schedules_from_db()
+        if text is not None:
+            _log.info("Schedule restored from the database")
+        else:
+            text = schedules_from_env(env)
         if text is not None:
             with open(target, "w", encoding="utf-8", newline="\n") as f:
                 f.write(text)

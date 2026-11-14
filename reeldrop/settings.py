@@ -1,5 +1,10 @@
 from .db import connect
 
+# Kept in the database only when it is shared PostgreSQL (DATABASE_URL), so they
+# survive restarts on a host without a disk.
+SESSION_KEY = "ig_session"          # instagrapi session JSON (login cookies: secret)
+SCHEDULES_KEY = "schedules_yaml"    # the live schedules.yaml text
+
 
 def get(key, default=None):
     with connect() as c:
