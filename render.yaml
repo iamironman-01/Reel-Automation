@@ -7,9 +7,8 @@
 # This file is only read by a Render Blueprint. A web service created by hand
 # (DEPLOY_RENDER.md) needs the same settings entered in the Render form.
 #   * no persistent disk: the database, queue, history and dashboard edits are lost on
-#     every restart, redeploy or sleep. Friends and sources that must survive go in
-#     config/schedules.yaml on this branch; the Instagram login survives through
-#     IG_SESSION_B64.
+#     every restart, redeploy or sleep. Friends and sources survive through
+#     SCHEDULES_B64 and the Instagram login through IG_SESSION_B64.
 # For an always-on service that keeps its data, use plan: starter and add back a disk:
 #     disk: {name: reeldrop-data, mountPath: /app/data, sizeGB: 1}
 #
@@ -62,6 +61,8 @@ services:
       - key: IG_VERIFICATION_CODE    # optional one-time code
         sync: false
       - key: IG_SESSION_B64          # base64 of a working data/session.json (free plan)
+        sync: false
+      - key: SCHEDULES_B64           # base64 of your schedules.yaml (friends stay private)
         sync: false
       - key: STORAGE_IS_EPHEMERAL    # makes the dashboard warn that edits do not survive
         value: "1"

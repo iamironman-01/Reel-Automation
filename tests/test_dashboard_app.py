@@ -31,6 +31,7 @@ def app(tmp_path, monkeypatch, temp_db):
     monkeypatch.setenv("SCHEDULES_PATH", str(live))
     monkeypatch.setenv("SENDER", "dry_run")
     monkeypatch.delenv("STORAGE_IS_EPHEMERAL", raising=False)
+    monkeypatch.delenv("SCHEDULES_B64", raising=False)
     for name in ("IG_USERNAME", "IG_PASSWORD", "IG_TOTP_SECRET"):
         monkeypatch.setenv(name, "")
     at = AppTest.from_file(str(ROOT / "dashboard.py"), default_timeout=60)
@@ -175,3 +176,17 @@ def test_free_plan_warning_only_when_storage_is_ephemeral(app, monkeypatch):
     monkeypatch.setenv("STORAGE_IS_EPHEMERAL", "1")
     at.run()
     assert any("no permanent storage" in w.value for w in at.warning)
+
+
+def test_private_schedule_code_is_offered_on_the_free_plan(app, monkeypatch):
+    import base64
+
+    at, live = app
+    log_in(at)
+    assert not [e for e in at.expander if "Keep these settings" in e.label]
+    monkeypatch.setenv("STORAGE_IS_EPHEMERAL", "1")
+    at.run()
+    box = [e for e in at.expander if "Keep these settings" in e.label]
+    assert box
+    code = [c.value for c in at.code]
+    assert base64.b64encode(live.read_text(encoding="utf-8").encode()).decode() in code

@@ -193,6 +193,7 @@ python -m reeldrop instagram-check [--to USER] [--send-test-text] [--reel URL]  
 | `IG_VERIFICATION_CODE` | Optional: one-time code if Instagram asks for one at login |
 | `IG_LINK_FALLBACK` | Optional, default off: `1` sends the reel link as text when the native reel share fails. Off means the reel is shared as a real reel or not sent |
 | `IG_SESSION_B64` | Optional: base64 copy of a working `data/session.json`. Written back to that file at start when the file is missing, for hosts without a disk such as Render's free plan. Treat it like a password |
+| `SCHEDULES_B64` | Optional: base64 copy of a whole `schedules.yaml`. Written to the live schedule file at start when that file is missing (hosts without a disk), so friends stay out of the repository. The dashboard's Advanced tab shows the code when `STORAGE_IS_EPHEMERAL=1`. An invalid value is ignored and the shipped default is used |
 | `STORAGE_IS_EPHEMERAL` | Optional: `1` makes the dashboard warn that its changes are lost on restart (set in `render.yaml` for the free plan) |
 | `KEEP_ALIVE_MINUTES` | Optional, default `9`: on Render, `start.py` requests its own `RENDER_EXTERNAL_URL` health URL this often so the free plan does not sleep. `0` turns it off; at most 14 |
 | `LOGIN_RETRY_MINUTES` | Optional, default `60`: after a failed Instagram login the scheduler waits this long before it exits and is restarted, so it does not retry every few minutes. `0` turns the wait off |

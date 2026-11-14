@@ -1,4 +1,5 @@
 """ReelDrop dashboard. Run with: streamlit run dashboard.py"""
+import base64
 import datetime
 import os
 import sqlite3
@@ -161,8 +162,8 @@ if os.getenv("STORAGE_IS_EPHEMERAL") == "1":
     st.warning(
         "This host has no permanent storage (Render free plan). The queue, history and "
         "any changes made here are lost when the service restarts or sleeps. To keep "
-        "friends and sources, copy the file from the Advanced tab into "
-        "config/schedules.yaml on the render-deploy branch and push it."
+        "friends and sources, copy the code from the Advanced tab into the "
+        "SCHEDULES_B64 environment variable in Render."
     )
 if config_problem:
     st.error(config_problem + " Fix it in the Advanced tab; the forms are disabled until then.")
@@ -594,6 +595,13 @@ with t_set:
 
 # --- Advanced ---
 with t_adv:
+    if raw_text is not None and os.getenv("STORAGE_IS_EPHEMERAL") == "1":
+        with st.expander("Keep these settings after a restart (Render free plan)"):
+            st.caption("Copy this code into the SCHEDULES_B64 environment variable in Render "
+                       "and save. On every start the schedule is restored from it. Copy it "
+                       "again after each change you want to keep.")
+            st.code(base64.b64encode(raw_text.encode("utf-8")).decode("ascii"),
+                    language=None, wrap_lines=True)
     st.caption("The schedule file behind every form on this dashboard. Edit it by hand only "
                "if a form cannot do what you need. Always quote times, like \"20:00\".")
     if raw_text is not None:

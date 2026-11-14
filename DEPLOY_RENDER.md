@@ -7,7 +7,7 @@ One **web service** runs the dashboard and the scheduler together (`start.py`). 
 | Free plan limit | Effect on ReelDrop | What to do |
 |-----------------|--------------------|------------|
 | Sleeps after 15 minutes without inbound web traffic | While asleep the scheduler is stopped and nothing is sent | Built in: the app pings itself every 9 minutes (below) |
-| No persistent disk; files are wiped on every sleep, restart or redeploy | The queue, send history, pause switch and dashboard edits are lost each time | Put friends and sources in `config/schedules.yaml` on the `render-deploy` branch, and the Instagram login in `IG_SESSION_B64` |
+| No persistent disk; files are wiped on every sleep, restart or redeploy | The queue, send history, pause switch and dashboard edits are lost each time | Keep friends and sources in `SCHEDULES_B64` and the Instagram login in `IG_SESSION_B64`; automatic discovery refills the queue |
 | 750 free hours per month per workspace | One service awake all month fits (a month has at most 744 hours) | Run only this one free service |
 | Render may restart a free service at any time | Same as a wipe | As above |
 
@@ -34,9 +34,15 @@ Without a disk, `data/session.json` disappears on every restart, and a fresh log
 
 At each start ReelDrop writes that session back to `data/session.json` and reuses it. If Instagram later logs the session out, repeat these steps.
 
-### Keep your friends and sources
+### Keep your friends and sources (privately)
 
-Dashboard changes last only until the next restart (the dashboard shows a yellow warning about this). Set things up in the dashboard, then copy the text from the **Advanced** tab into `config/schedules.yaml` on the `render-deploy` branch and push. Render redeploys with it.
+Dashboard changes last only until the next restart, and the repository is public, so friends' usernames should not be committed. Keep the whole schedule in a private Render variable instead:
+
+1. Set up friends, times and reel sources in the dashboard.
+2. In the **Advanced** tab, open **Keep these settings after a restart** and copy the code.
+3. In Render, paste it as the value of `SCHEDULES_B64` and save.
+
+At every start the schedule is restored from `SCHEDULES_B64` (when it is valid; otherwise the default from the repository is used and the log says why). Repeat steps 2 and 3 after each change you want to keep.
 
 ## Create the web service (no Blueprint)
 
@@ -68,12 +74,13 @@ Code is deployed from the **`render-deploy`** branch. `main` is not used for dep
    | `IG_PASSWORD` | its password |
    | `IG_TOTP_SECRET` | the two-factor setup key |
    | `IG_SESSION_B64` | your saved login (see above) |
+| `SCHEDULES_B64` | your friends, times and sources (see above; can be added after the first deploy) |
    | `STORAGE_IS_EPHEMERAL` | `1` |
    | `LOGIN_RETRY_MINUTES` | `60` |
    | `IG_LINK_FALLBACK` | `0` |
 
 4. **Create Web Service.** The first build takes a few minutes. Open the address Render shows, log in with `DASHBOARD_PASSWORD`, and check the dashboard.
-5. Set up friends and sources in the dashboard, then copy the **Advanced** tab text into `config/schedules.yaml` on `render-deploy` if they must survive restarts (see above).
+5. Set up friends and sources in the dashboard, then save them in `SCHEDULES_B64` so they survive restarts (see above).
 6. Change `SENDER` to `instagrapi` in the Environment tab and save. Render restarts the service and the scheduler logs in.
 7. Open the dashboard again. A red box means the Instagram login failed; see the next section.
 

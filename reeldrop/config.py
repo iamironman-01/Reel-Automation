@@ -1,4 +1,7 @@
+import base64
+import binascii
 import datetime
+import logging
 import os
 import re
 import shutil
@@ -365,17 +368,52 @@ def schedules_path() -> str:
     return os.environ.get("SCHEDULES_PATH") or DEFAULT_SCHEDULES_PATH
 
 
-def ensure_schedules_file(default: str = DEFAULT_SCHEDULES_PATH) -> str:
-    """Make sure the live schedule file exists, seeding it from the repo default.
+SCHEDULES_ENV = "SCHEDULES_B64"
+_log = logging.getLogger("reeldrop")
+
+
+def schedules_from_env(env=None) -> str | None:
+    """The schedule text from SCHEDULES_B64 if it is set and valid, else None.
+
+    SCHEDULES_B64 is a base64 copy of a schedules.yaml. It keeps friends and sources
+    private on a host without a disk (Render's free plan) instead of committing them to
+    a public repository. An invalid value is logged (never its content) and ignored.
+    """
+    raw = (env if env is not None else os.environ).get(SCHEDULES_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        text = base64.b64decode("".join(raw.split()), validate=True).decode("utf-8")
+        import yaml  # lazy, like load_config
+        parse_config(yaml.safe_load(text))
+    except (binascii.Error, UnicodeDecodeError) as e:
+        _log.warning("Ignoring %s: not valid base64 text (%s)", SCHEDULES_ENV, type(e).__name__)
+        return None
+    except Exception as e:  # bad YAML or an invalid rule
+        _log.warning("Ignoring %s: the schedule in it is invalid: %s", SCHEDULES_ENV, e)
+        return None
+    return text
+
+
+def ensure_schedules_file(default: str = DEFAULT_SCHEDULES_PATH, env=None) -> str:
+    """Make sure the live schedule file exists, seeding it when it is missing.
 
     On a host where the image is rebuilt on every deploy (e.g. Render), edits made in
-    the dashboard must live on the persistent disk, not inside the image. The first
-    start copies the shipped default there; later starts leave the edited file alone.
+    the dashboard must live outside the image. When the live file is missing it is
+    written from SCHEDULES_B64 if that holds a valid schedule, otherwise copied from the
+    shipped default. An existing live file is never touched.
     """
-    target = schedules_path()
+    target = schedules_path() if env is None else (env.get("SCHEDULES_PATH")
+                                                  or DEFAULT_SCHEDULES_PATH)
     if not os.path.exists(target) and os.path.abspath(target) != os.path.abspath(default):
         os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
-        shutil.copyfile(default, target)
+        text = schedules_from_env(env)
+        if text is not None:
+            with open(target, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+            _log.info("Schedule restored from %s", SCHEDULES_ENV)
+        else:
+            shutil.copyfile(default, target)
     return target
 
 
