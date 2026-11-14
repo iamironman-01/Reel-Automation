@@ -30,6 +30,7 @@ def app(tmp_path, monkeypatch, temp_db):
     monkeypatch.setenv("DASHBOARD_PASSWORD", PASSWORD)
     monkeypatch.setenv("SCHEDULES_PATH", str(live))
     monkeypatch.setenv("SENDER", "dry_run")
+    monkeypatch.delenv("STORAGE_IS_EPHEMERAL", raising=False)
     for name in ("IG_USERNAME", "IG_PASSWORD", "IG_TOTP_SECRET"):
         monkeypatch.setenv(name, "")
     at = AppTest.from_file(str(ROOT / "dashboard.py"), default_timeout=60)
@@ -165,3 +166,12 @@ def test_broken_schedule_file_disables_the_forms_but_not_the_editor(app):
     assert not [b for b in at.button if b.label == "Add schedule"]
     assert [b for b in at.button if b.label == "Save file"]
     assert os.path.exists(live)
+
+
+def test_free_plan_warning_only_when_storage_is_ephemeral(app, monkeypatch):
+    at, _ = app
+    log_in(at)
+    assert not any("no permanent storage" in w.value for w in at.warning)
+    monkeypatch.setenv("STORAGE_IS_EPHEMERAL", "1")
+    at.run()
+    assert any("no permanent storage" in w.value for w in at.warning)

@@ -157,6 +157,13 @@ if send_state["error"]:
 if sender_name == "dry_run":
     st.info("Dry-run mode: reels are only printed in the log, nothing is sent. "
             "Set the SENDER environment variable to `instagrapi` to send real Instagram DMs.")
+if os.getenv("STORAGE_IS_EPHEMERAL") == "1":
+    st.warning(
+        "This host has no permanent storage (Render free plan). The queue, history and "
+        "any changes made here are lost when the service restarts or sleeps. To keep "
+        "friends and sources, copy the file from the Advanced tab into "
+        "config/schedules.yaml on the render-deploy branch and push it."
+    )
 if config_problem:
     st.error(config_problem + " Fix it in the Advanced tab; the forms are disabled until then.")
 

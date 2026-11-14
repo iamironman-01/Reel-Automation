@@ -10,6 +10,8 @@ job pauses.
 instagrapi is imported inside __init__ so this module can be imported (and tested with a
 fake) without the library installed. Error classes are matched by name, see base.py.
 """
+import base64
+import binascii
 import logging
 import os
 from pathlib import Path
@@ -51,6 +53,34 @@ VERIFICATION_HELP = (
 def link_fallback_enabled() -> bool:
     """True if IG_LINK_FALLBACK asks for the link to be sent when the native share fails."""
     return os.environ.get(LINK_FALLBACK_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Hosts without a persistent disk (Render's free plan) lose data/session.json on every
+# restart. IG_SESSION_B64 holds a base64 copy of a working session file, so each start
+# reuses that login instead of logging in fresh from a cloud IP address.
+SESSION_ENV = "IG_SESSION_B64"
+
+
+def seed_session_from_env(path: Path | None = None) -> bool:
+    """Write the session file from IG_SESSION_B64 if no session file exists yet.
+
+    Returns True if a file was written. A bad value is logged (never its content) and
+    ignored, so the sender falls back to a normal login.
+    """
+    path = Path(path or SESSION)
+    raw = os.environ.get(SESSION_ENV, "").strip()
+    if not raw or path.exists():
+        return False
+    from ..dashboard_helpers import save_session_file   # stdlib only, no cycle
+    try:
+        data = base64.b64decode("".join(raw.split()), validate=True)
+        save_session_file(data, str(path))
+    except (binascii.Error, ValueError, OSError) as e:
+        log.warning("Ignoring %s: %s", SESSION_ENV,
+                    "not valid base64" if isinstance(e, binascii.Error) else e)
+        return False
+    log.info("Instagram session restored from %s", SESSION_ENV)
+    return True
 
 
 def _require_env(name: str) -> str:
@@ -99,6 +129,7 @@ class InstagrapiSender(Sender):
         self.cl = Client()
         self.cl.delay_range = list(DELAY_RANGE)
         self._session_loaded = False
+        seed_session_from_env(SESSION)
         if SESSION.exists():
             try:
                 self.cl.load_settings(SESSION)   # reuse device + cookies

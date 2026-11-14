@@ -64,13 +64,13 @@ sources / pasted links ─► reels table (SQLite) ─► scheduler rule fires �
 - `python -m reeldrop` loads `.env` in `cli()`, not in `main()`, so tests that call `main()` never read a real `.env`.
 - Dashboard forms never write the schedule file directly: `config_editor` builds the new mapping, `to_yaml` dumps it, and `save_schedules` validates it with `load_config` before `os.replace`. Add new form fields the same way.
 - A failed Instagram login makes `main.py` record `sender_error` in settings (shown in the dashboard) and wait `LOGIN_RETRY_MINUTES` before exiting, because `start.py` restarts the scheduler within minutes and repeated logins get accounts flagged. Do not remove that wait.
-- Render deploys the `render-deploy` branch (`branch:` in `render.yaml`), not `main`.
+- Render deploys the `render-deploy` branch (`branch:` in `render.yaml`), not `main`, on the **free** plan: no disk, so everything under `data/` is wiped on each restart or sleep. The Instagram session survives through `IG_SESSION_B64` (`seed_session_from_env`), and lasting config must be committed in `config/schedules.yaml`.
 - Block detection lives in `senders/base.py` (`BLOCK_ERROR_NAMES` / `is_block_error`). That is the single source of truth: do not add separate lists of block exceptions elsewhere.
 - `python -m reeldrop instagram-check` is the manual pre-flight. It sends nothing unless `--send-test-text` or `--reel` is given (both need `--to`), and it only changes the pause flag on a block.
 - Third-party libraries are imported lazily where tests must run without them (`yaml` in `load_config`, `requests` in `notify_me`, `instagrapi` inside the sender). Keep new code importable without those libraries.
 - Each discovery source type has its own small `_fetch_*` function in `discovery.py`. Only the `explore` source (`explore_reels` / `reels`) has been seen working on a live account; hashtag endpoints returned nothing there, and `user` / `collection` are untested live. Fix signature problems there, not in callers.
 - Time zones: `TZ_NAME` for timestamps, `timezone:` in the YAML for rules. A timezone change in the YAML needs a scheduler restart.
-- Persistence on Render is the disk at `/app/data`. The live schedule file is `SCHEDULES_PATH=/app/data/schedules.yaml`, seeded once from `config/schedules.yaml`.
+- The live schedule file on Render is `SCHEDULES_PATH=/app/data/schedules.yaml`, seeded from `config/schedules.yaml` when missing. On the free plan that happens on every start.
 
 ## Testing
 

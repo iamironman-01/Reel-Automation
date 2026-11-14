@@ -1,18 +1,41 @@
-# Deploy ReelDrop on Render (24/7)
+# Deploy ReelDrop on Render
 
-One always-on **web service** runs the dashboard and the scheduler together (`start.py`), with one **persistent disk** for the database, Instagram session, logs and your edited schedules.
+One **web service** runs the dashboard and the scheduler together (`start.py`). `render.yaml` uses Render's **free** plan.
 
-## Cost and why
+## What the free plan means
 
-| Need | Render requirement |
-|------|--------------------|
-| Never sleeps | Free web services spin down after 15 minutes without traffic. Use a paid plan. |
-| Keeps the database | Free instances lose their files on every restart. Persistent disks need a paid plan. |
-| Scheduler + dashboard | A disk can't be shared between services, so both run in one container. |
+| Free plan limit | Effect on ReelDrop | What to do |
+|-----------------|--------------------|------------|
+| Sleeps after 15 minutes without inbound web traffic | While asleep the scheduler is stopped and nothing is sent | Keep it awake with an outside pinger (below) |
+| No persistent disk; files are wiped on every sleep, restart or redeploy | The queue, send history, pause switch and dashboard edits are lost each time | Put friends and sources in `config/schedules.yaml` on the `render-deploy` branch, and the Instagram login in `IG_SESSION_B64` |
+| 750 free hours per month per workspace | One service awake all month fits (a month has at most 744 hours) | Run only this one free service |
+| Render may restart a free service at any time | Same as a wipe | As above |
 
-`render.yaml` uses the `starter` plan (about $7/month) plus a 1 GB disk (about $0.25/month). Check [render.com/pricing](https://render.com/pricing) for current prices.
+Because the history is wiped, the daily cap starts again from 0 after a restart, and a reel sent before a restart may be found and sent again. For an always-on service that keeps its data, change `plan: free` to `plan: starter` (about $7/month) and add a 1 GB disk at `/app/data` (the comment at the top of `render.yaml` shows the lines).
 
-A disk means each deploy restarts the one instance, so the dashboard is unavailable for a minute or two. `start.py` gives a running send job up to 240 seconds (`SHUTDOWN_GRACE_SECONDS`) to finish before it stops.
+### Keep it awake
+
+Use a free outside pinger, for example [cron-job.org](https://cron-job.org) or UptimeRobot:
+
+- URL: `https://<your-service>.onrender.com/_stcore/health`
+- Every 10 minutes
+
+### Keep the Instagram login across restarts
+
+Without a disk, `data/session.json` disappears on every restart, and a fresh login from a cloud server is the most likely to be challenged. Save a working session as an environment variable instead:
+
+1. On your own computer, where the login works, run `python -m reeldrop instagram-check` once.
+2. In PowerShell, in the project folder, copy the session file as base64 to the clipboard:
+   ```powershell
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("data\session.json")) | Set-Clipboard
+   ```
+3. In Render, paste it as the value of `IG_SESSION_B64`. It holds login cookies: treat it like a password.
+
+At each start ReelDrop writes that session back to `data/session.json` and reuses it. If Instagram later logs the session out, repeat these steps.
+
+### Keep your friends and sources
+
+Dashboard changes last only until the next restart (the dashboard shows a yellow warning about this). Set things up in the dashboard, then copy the text from the **Advanced** tab into `config/schedules.yaml` on the `render-deploy` branch and push. Render redeploys with it.
 
 ## One-time setup
 
@@ -20,9 +43,9 @@ A disk means each deploy restarts the one instance, so the dashboard is unavaila
 2. In Render: **New → Blueprint**, connect your GitHub account, and pick `iamironman-01/Reel-Automation`. Render reads `render.yaml`.
 3. Fill in the variables marked *sync: false*:
    - `DASHBOARD_PASSWORD`: a real password (the app refuses `change-me`).
-   - Instagram route B (real Instagram DMs): `IG_USERNAME`, `IG_PASSWORD` and `IG_TOTP_SECRET` (the two-factor setup key; in a live test the login only succeeded with it). Only with a separate test account.
+   - Instagram route B (real Instagram DMs): `IG_USERNAME`, `IG_PASSWORD`, `IG_TOTP_SECRET` (the two-factor setup key; in a live test the login only succeeded with it) and `IG_SESSION_B64` (see above). Only with a separate test account.
    - Telegram (optional, alerts or an alternative route): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_MY_CHAT_ID`, and `TELEGRAM_FRIEND_CHAT_ID` if Telegram is the sender.
-4. Deploy. Open the service URL, log in, and check the dashboard. `SENDER` starts as `dry_run`, so nothing real is sent.
+4. Deploy. Open the service URL, log in, and check the dashboard. `SENDER` starts as `dry_run`, so nothing real is sent. Set up the pinger now.
 5. In the dashboard, set everything up before sending for real:
    - **Friends** tab: remove the placeholder `friend_username` schedules and add your friend(s) with a time, days and number of reels.
    - **Reel topics** tab: add sources (creators, Explore), optional caption keywords, then turn on **Find reels automatically**.

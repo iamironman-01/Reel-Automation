@@ -112,6 +112,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.delenv("IG_TOTP_SECRET", raising=False)
     monkeypatch.delenv("IG_VERIFICATION_CODE", raising=False)
     monkeypatch.delenv("IG_LINK_FALLBACK", raising=False)
+    monkeypatch.delenv("IG_SESSION_B64", raising=False)
     return tmp_path
 
 
@@ -712,3 +713,56 @@ def test_missing_library_gives_an_install_hint(monkeypatch, env):
             module.InstagrapiSender()
     finally:
         sys.modules.pop("reeldrop.senders.instagrapi_sender", None)
+
+
+# --- IG_SESSION_B64: restore the login on hosts without a disk -----------------------
+
+GOOD_SESSION = b'{"uuids": {"phone_id": "x"}, "cookies": {}, "authorization_data": {"a": 1}}'
+
+
+def _b64(raw):
+    import base64
+    return base64.b64encode(raw).decode()
+
+
+def test_session_is_restored_from_env_and_then_loaded(mod, env, monkeypatch):
+    monkeypatch.setenv("IG_SESSION_B64", _b64(GOOD_SESSION))
+    s = mod.InstagrapiSender()
+    assert (env / "data" / "session.json").read_bytes() == GOOD_SESSION
+    assert kinds(s.cl) == ["load_settings", "login", "dump_settings"]
+
+
+def test_env_session_accepts_line_breaks(mod, env, monkeypatch):
+    value = _b64(GOOD_SESSION)
+    monkeypatch.setenv("IG_SESSION_B64", value[:20] + chr(10) + " " + value[20:])
+    assert mod.seed_session_from_env(env / "data" / "session.json") is True
+
+
+def test_existing_session_file_wins_over_env(mod, env, monkeypatch):
+    (env / "data").mkdir()
+    (env / "data" / "session.json").write_text("{}")
+    monkeypatch.setenv("IG_SESSION_B64", _b64(GOOD_SESSION))
+    assert mod.seed_session_from_env(env / "data" / "session.json") is False
+    assert (env / "data" / "session.json").read_text() == "{}"
+
+
+def test_no_env_session_means_no_file(mod, env):
+    assert mod.seed_session_from_env(env / "data" / "session.json") is False
+    assert not (env / "data" / "session.json").exists()
+
+
+@pytest.mark.parametrize("value", ["%%%not-base64%%%", _b64(b"not json"), _b64(b'{"a": 1}')])
+def test_bad_env_session_is_ignored_and_login_still_runs(mod, env, monkeypatch, caplog, value):
+    monkeypatch.setenv("IG_SESSION_B64", value)
+    with caplog.at_level(logging.WARNING, logger="reeldrop"):
+        s = mod.InstagrapiSender()
+    assert "Ignoring IG_SESSION_B64" in caplog.text
+    assert "load_settings" not in kinds(s.cl)
+    assert kinds(s.cl) == ["login", "dump_settings"]
+
+
+def test_env_session_content_never_logged(mod, env, monkeypatch, caplog):
+    monkeypatch.setenv("IG_SESSION_B64", _b64(b'{"sessionid": "SECRET-COOKIE"}'))
+    with caplog.at_level(logging.DEBUG):
+        mod.InstagrapiSender()
+    assert "SECRET-COOKIE" not in caplog.text
