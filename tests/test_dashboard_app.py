@@ -32,6 +32,7 @@ def app(tmp_path, monkeypatch, temp_db):
     monkeypatch.setenv("SENDER", "dry_run")
     monkeypatch.delenv("STORAGE_IS_EPHEMERAL", raising=False)
     monkeypatch.delenv("SCHEDULES_B64", raising=False)
+    monkeypatch.delenv("DASHBOARD_PUBLIC", raising=False)
     for name in ("IG_USERNAME", "IG_PASSWORD", "IG_TOTP_SECRET"):
         monkeypatch.setenv(name, "")
     at = AppTest.from_file(str(ROOT / "dashboard.py"), default_timeout=60)
@@ -238,3 +239,32 @@ def test_last_test_result_is_shown(app):
     log_in(at)
     assert any("15 Nov 2026, 9:05 PM" in m.value and "sent 1/1" in m.value
                for m in at.markdown)
+
+
+def test_public_dashboard_opens_without_a_password(app, monkeypatch):
+    at, _ = app
+    monkeypatch.setenv("DASHBOARD_PUBLIC", "1")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "")      # empty, so the real .env cannot fill it in
+    at.run()
+    assert not at.exception
+    assert not [t for t in at.text_input if t.label == "Password"]
+    assert [t.label for t in at.tabs][0] == "Friends"
+    assert any("No password (DASHBOARD_PUBLIC=1)" in w.value for w in at.warning)
+    assert not [e for e in at.expander if "Upload a session file" in e.label]
+
+
+def test_password_is_still_required_without_the_switch(app, monkeypatch):
+    at, _ = app
+    monkeypatch.setenv("DASHBOARD_PUBLIC", "0")
+    at.run()
+    assert [t for t in at.text_input if t.label == "Password"]
+    assert len(at.tabs) == 0
+
+
+def test_no_password_set_and_no_switch_is_refused(app, monkeypatch):
+    at, _ = app
+    monkeypatch.delenv("DASHBOARD_PUBLIC", raising=False)
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "")      # empty, so the real .env cannot fill it in
+    at.run()
+    assert any("DASHBOARD_PASSWORD is not set" in e.value for e in at.error)
+    assert len(at.tabs) == 0

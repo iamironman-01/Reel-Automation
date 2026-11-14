@@ -67,7 +67,7 @@ Code is deployed from the **`render-deploy`** branch. `main` is not used for dep
 
    | Key | Value |
    |-----|-------|
-   | `DASHBOARD_PASSWORD` | a long password of your choice |
+   | `DASHBOARD_PASSWORD` | a long password of your choice (or set `DASHBOARD_PUBLIC` to `1` for no password, see below) |
    | `SENDER` | `dry_run` for the first deploy, `instagrapi` afterwards |
    | `TZ_NAME` | `Asia/Kolkata` |
    | `IG_USERNAME` | the sending account's username |
@@ -116,7 +116,7 @@ To deploy only after tests pass, change it to `autoDeployTrigger: checksPass`. T
 
 - **Instagram Route B from a cloud IP** is riskier: cloud addresses get more login checks and blocks than a home connection. `session.json` stays on the persistent disk so ReelDrop reuses the login instead of logging in again, and `IG_TOTP_SECRET` lets two-factor prompts be answered automatically. A session uploaded from another computer is then used from a different IP address, which Instagram may also question. If it keeps getting challenged, run Route B at home instead. Telegram stays optional here, for alerts to yourself (`TELEGRAM_MY_CHAT_ID`).
 - **Backups:** the disk is the only copy. Render takes daily disk snapshots, but also download the database now and then (Render Shell: `cp /app/data/reeldrop.db ...`).
-- **Dashboard is public.** The password gate is the only protection. Use a long password.
+- **Dashboard is public.** The password gate is the only protection. Use a long password. With `DASHBOARD_PUBLIC=1` there is no protection at all: anyone who finds the `onrender.com` link can add usernames and make your Instagram account send them reels. Keep the link private, and remove the variable to turn the password back on.
 - **Telegram control:** keep `TELEGRAM_CONTROL=0` until `TELEGRAM_MY_CHAT_ID` is your own chat id.
 
 ## Not yet verified

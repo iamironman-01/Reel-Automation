@@ -275,3 +275,12 @@ def test_test_send_status():
              "test_send_at": "2026-11-15 21:00:00"}
     assert test_send_status(lambda k, d=None: store.get(k, d)) == {
         "requested": True, "result": "@a: sent 1/1", "at": "2026-11-15 21:00:00"}
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("1", True), ("true", True), (" YES ", True), ("on", True),
+    ("0", False), ("", False), (None, False), ("no", False), ("off", False), ("2", False),
+])
+def test_dashboard_is_public(value, expected):
+    from reeldrop.dashboard_helpers import dashboard_is_public
+    assert dashboard_is_public(value) is expected

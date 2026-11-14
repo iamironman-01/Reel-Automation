@@ -29,6 +29,11 @@ def password_config_error(expected: str | None) -> str | None:
     return None
 
 
+def dashboard_is_public(value: str | None) -> bool:
+    """True if DASHBOARD_PUBLIC asks for a dashboard without a password."""
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def password_matches(entered: str | None, expected: str | None) -> bool:
     """Constant-time password comparison. Never true for an empty password."""
     if not entered or not expected:

@@ -15,6 +15,7 @@ from reeldrop.dashboard_helpers import (
     AM_PM,
     SENDER_RETRY_KEY,
     TEST_SEND_REQUEST_KEY,
+    dashboard_is_public,
     STATUS_FILTERS,
     add_links,
     daily_counts,
@@ -62,13 +63,15 @@ HIGH_DAILY_CAP = 15
 st.set_page_config(page_title="ReelDrop", page_icon="🎬", layout="wide")
 
 # --- password gate (nothing below this block runs until it passes) ---
+# DASHBOARD_PUBLIC=1 turns the gate off on purpose. Without it a real password is required.
+PUBLIC = dashboard_is_public(os.getenv("DASHBOARD_PUBLIC"))
 _expected_pw = os.getenv("DASHBOARD_PASSWORD")
-_pw_problem = password_config_error(_expected_pw)
+_pw_problem = None if PUBLIC else password_config_error(_expected_pw)
 if _pw_problem:
     st.error(_pw_problem)
     st.stop()
 
-if not st.session_state.get("ok"):
+if not PUBLIC and not st.session_state.get("ok"):
     with st.form("login"):
         pw = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Log in")
@@ -150,6 +153,11 @@ def show_times_12h(df, columns):
 
 # --- header ---
 st.title("🎬 ReelDrop")
+
+if PUBLIC:
+    st.warning("No password (DASHBOARD_PUBLIC=1): anyone who has this page's link can "
+               "change friends and make your Instagram account send reels. Keep the link "
+               "private. Uploading a session file is turned off while there is no password.")
 
 if "flash" in st.session_state:
     st.success(st.session_state.pop("flash"))
@@ -637,21 +645,25 @@ with t_set:
     else:
         st.caption("The scheduler started its sender without an error.")
     st.write("**Session file:** " + ("present" if os.path.exists(SESSION_PATH) else "none yet"))
-    with st.expander("Upload a session file from a computer where the login works"):
-        st.caption("Instagram checks logins from cloud servers more strictly. If the login "
-                   "fails here, log in on your own computer first and upload its "
-                   "`data/session.json`. The file holds login cookies: treat it like a "
-                   "password. Its content is never shown.")
-        uploaded = st.file_uploader("session.json", type=["json"])
-        if uploaded is not None and st.button("Save session file"):
-            try:
-                save_session_file(uploaded.getvalue(), SESSION_PATH)
-            except (ValueError, OSError) as e:
-                st.error(f"Not saved: {e}")
-            else:
-                st.session_state["flash"] = ("Session file saved. Press 'Retry login now' "
-                                             "or restart the service to use it.")
-                st.rerun()
+    if PUBLIC:
+        st.caption("Session file upload is off while the dashboard has no password. "
+                   "Use the IG_SESSION_B64 variable in Render instead.")
+    else:
+        with st.expander("Upload a session file from a computer where the login works"):
+            st.caption("Instagram checks logins from cloud servers more strictly. If the login "
+                       "fails here, log in on your own computer first and upload its "
+                       "`data/session.json`. The file holds login cookies: treat it like a "
+                       "password. Its content is never shown.")
+            uploaded = st.file_uploader("session.json", type=["json"])
+            if uploaded is not None and st.button("Save session file"):
+                try:
+                    save_session_file(uploaded.getvalue(), SESSION_PATH)
+                except (ValueError, OSError) as e:
+                    st.error(f"Not saved: {e}")
+                else:
+                    st.session_state["flash"] = ("Session file saved. Press 'Retry login now' "
+                                                 "or restart the service to use it.")
+                    st.rerun()
 
 # --- Advanced ---
 with t_adv:
