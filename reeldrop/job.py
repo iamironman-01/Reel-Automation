@@ -76,23 +76,29 @@ def _top_up(needed: int) -> int:
         return 0
 
 
+def _result(status, sent=0, total=0):
+    """What a run did: status is sent | paused | quiet | cap | empty | blocked."""
+    return {"status": status, "sent": sent, "total": total}
+
+
 def run_rule(rule, cfg, sender):
+    """Run one rule now. Returns a summary dict (see _result)."""
     with _RUN_LOCK:
-        _run_rule(rule, cfg, sender)
+        return _run_rule(rule, cfg, sender)
 
 
 def _run_rule(rule, cfg, sender):
     if is_paused():
         log.warning("[%s] paused — skipping", rule.name)
-        return
+        return _result("paused")
     today = _today(cfg)
     if today in cfg.quiet_days:
         log.info("[%s] quiet day (%s) — skipping", rule.name, today)
-        return
+        return _result("quiet")
     remaining = cfg.daily_cap - sent_today()
     if remaining <= 0:
         log.info("[%s] daily cap reached", rule.name)
-        return
+        return _result("cap")
     wanted = min(rule.count, remaining)
     reels = next_pending(wanted, order=rule.pick, recipient=rule.recipient)
     if len(reels) < wanted and _client_provider is not None and _discovery_enabled(cfg):
@@ -101,11 +107,11 @@ def _run_rule(rule, cfg, sender):
         _top_up(wanted - len(reels))
         if is_paused():                 # a block during discovery pauses everything
             log.warning("[%s] paused by auto-discovery — skipping", rule.name)
-            return
+            return _result("paused")
         reels = next_pending(wanted, order=rule.pick, recipient=rule.recipient)
     if not reels:
         notify_me(f"ReelDrop: queue is empty for {rule.name} — add more reels")
-        return
+        return _result("empty")
 
     sent = 0
     blocked = False
@@ -158,3 +164,4 @@ def _run_rule(rule, cfg, sender):
     if not blocked:
         icon = "✅" if sent == len(reels) else "⚠️"
         notify_me(f"{icon} ReelDrop {rule.name}: sent {sent}/{len(reels)}")
+    return _result("blocked" if blocked else "sent", sent, len(reels))

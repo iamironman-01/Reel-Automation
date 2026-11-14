@@ -311,7 +311,7 @@ def run_main(main_mod, monkeypatch, cfg=None, sender=None):
 
 def test_main_registers_discovery_job_with_shared_provider(main_mod, monkeypatch, fake_discovery):
     sched, sender = run_main(main_mod, monkeypatch, Config(rules=[Rule("a", "*", "20:00", 1, "f")]))
-    assert set(sched.jobs) == {"a", "__reload__", "__discovery__"}
+    assert set(sched.jobs) == {"a", "__reload__", "__discovery__", "__test_send__"}
     dj = sched.jobs["__discovery__"]
     assert dj.func is main_mod.discovery_tick and dj.trigger == "interval"
     assert dj.kwargs["seconds"] == 60

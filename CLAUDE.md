@@ -51,7 +51,7 @@ sources / pasted links ─► reels table (SQLite) ─► scheduler rule fires �
 - **Secrets** come only from environment variables (`.env`). Never log or put passwords or the Telegram bot token in exception text; use `senders.base.redact`. `.env`, `data/`, `session.json` and `*.db` are gitignored.
 - **Config edits are validated before they are written.** The dashboard writes a temp file, validates it with `load_config`, then `os.replace`s it. A bad file must leave the old one untouched.
 - **Always quote times** in YAML (`"20:00"`). Unquoted `20:00` loads as a number and is rejected on purpose.
-- **Reserved job ids:** `__reload__` and `__discovery__` cannot be rule names, and the live reload must never remove them.
+- **Reserved job ids:** `__reload__`, `__discovery__` and `__test_send__` cannot be rule names, and the live reload must never remove them.
 - **One Instagram login.** Discovery reuses `sender.cl` when `SENDER=instagrapi`. Do not add code paths that log in a second time without a reason.
 
 ## Conventions and gotchas
@@ -66,6 +66,8 @@ sources / pasted links ─► reels table (SQLite) ─► scheduler rule fires �
 - A failed Instagram login makes `main.py` record `sender_error` in settings (shown in the dashboard) and wait `LOGIN_RETRY_MINUTES` before exiting, because `start.py` restarts the scheduler within minutes and repeated logins get accounts flagged. Do not remove that wait.
 - `start.py` pings `RENDER_EXTERNAL_URL` + `/_stcore/health` every `KEEP_ALIVE_MINUTES` (default 9) from a daemon thread, so the free plan never sleeps. A failed ping is logged and never stops the service.
 - Render deploys the `render-deploy` branch (`branch:` in `render.yaml`), not `main`, on the **free** plan: no disk, so everything under `data/` is wiped on each restart or sleep. The Instagram session survives through `IG_SESSION_B64` (`seed_session_from_env`) and the schedule through `SCHEDULES_B64` (`config.schedules_from_env`, used by `ensure_schedules_file` only when the live file is missing). The repo is public: never commit real friend usernames; `config/schedules.yaml` stays the safe default (placeholder friend, discovery off). Locally the owner's real schedule lives in `data/schedules.yaml` via `SCHEDULES_PATH` in `.env`.
+- The dashboard shows 12-hour AM/PM times (`dashboard_helpers.time_12h`, `timestamp_12h`, `time_24h`); `schedules.yaml` and the database keep 24-hour times. Never store a 12-hour string.
+- **Test send:** the dashboard sets `test_send_requested`; the `__test_send__` job in `main.py` (`check_test_send_request` -> `send_test_reels`) sends one reel per friend through `job.run_rule` with a `Rule(name="test_send", count=1)`, so every safety check applies. Do not add a send path that bypasses `run_rule`. `run_rule` returns `{status, sent, total}`.
 - Block detection lives in `senders/base.py` (`BLOCK_ERROR_NAMES` / `is_block_error`). That is the single source of truth: do not add separate lists of block exceptions elsewhere.
 - `python -m reeldrop instagram-check` is the manual pre-flight. It sends nothing unless `--send-test-text` or `--reel` is given (both need `--to`), and it only changes the pause flag on a block.
 - Third-party libraries are imported lazily where tests must run without them (`yaml` in `load_config`, `requests` in `notify_me`, `instagrapi` inside the sender). Keep new code importable without those libraries.

@@ -119,3 +119,9 @@ The dashboard no longer needs YAML edits for normal use:
 - **Advanced** tab: the raw file, as before.
 
 Form edits go through `reeldrop/config_editor.py` (pure functions on the raw mapping) and are saved with the same validate-then-replace step as the raw editor. `tests/test_dashboard_app.py` runs the page headlessly with Streamlit's `AppTest`.
+
+## Update: 12-hour times and a test send (2026-11-15)
+
+- Every time on the dashboard is shown in 12-hour format with AM/PM (IST); the schedule pickers are Hour / Minute / AM-PM. The file keeps 24-hour times.
+- **Send a test reel to every friend** (Friends tab) asks the scheduler, through a settings flag, to send one waiting reel to each friend now. It runs through `job.run_rule`, so every limit and safety check applies, and test reels count towards the daily cap.
+

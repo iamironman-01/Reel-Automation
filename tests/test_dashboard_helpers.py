@@ -201,3 +201,77 @@ def test_session_errors_never_contain_the_file_content(tmp_path):
     with pytest.raises(ValueError) as exc:
         save_session_file(b'{"sessionid": "SECRET-COOKIE-VALUE"}', str(tmp_path / "s.json"))
     assert "SECRET-COOKIE-VALUE" not in str(exc.value)
+
+
+# --- 12-hour times ---------------------------------------------------------------
+
+@pytest.mark.parametrize("value,expected", [
+    ("00:00", (12, 0, "AM")), ("00:30", (12, 30, "AM")), ("09:05", (9, 5, "AM")),
+    ("11:59", (11, 59, "AM")), ("12:00", (12, 0, "PM")), ("13:00", (1, 0, "PM")),
+    ("21:00", (9, 0, "PM")), ("23:59", (11, 59, "PM")),
+])
+def test_split_12h(value, expected):
+    from reeldrop.dashboard_helpers import split_12h
+    assert split_12h(value) == expected
+
+
+@pytest.mark.parametrize("bad", ["", "8pm", "24:00", "12:60", None, "1:2:3"])
+def test_split_12h_fallback(bad):
+    from reeldrop.dashboard_helpers import split_12h
+    assert split_12h(bad) == (8, 0, "PM")
+    assert split_12h(bad, fallback=None) is None
+
+
+@pytest.mark.parametrize("hour,minute,am_pm,expected", [
+    (12, 0, "AM", "00:00"), (12, 30, "am", "00:30"), (9, 5, "AM", "09:05"),
+    (12, 0, "PM", "12:00"), (1, 0, "PM", "13:00"), (9, 0, " pm ", "21:00"), (11, 59, "PM", "23:59"),
+])
+def test_time_24h(hour, minute, am_pm, expected):
+    from reeldrop.dashboard_helpers import time_24h
+    assert time_24h(hour, minute, am_pm) == expected
+
+
+@pytest.mark.parametrize("hour,minute,am_pm", [
+    (0, 0, "AM"), (13, 0, "PM"), (5, 60, "AM"), (5, -1, "AM"), (5, 0, "XM"),
+    (True, 0, "AM"), ("5", 0, "AM"), (5, 1.5, "AM"),
+])
+def test_time_24h_rejects_bad_input(hour, minute, am_pm):
+    from reeldrop.dashboard_helpers import time_24h
+    with pytest.raises(ValueError):
+        time_24h(hour, minute, am_pm)
+
+
+def test_every_minute_of_the_day_round_trips():
+    from reeldrop.dashboard_helpers import split_12h, time_24h
+    for h in range(24):
+        for m in range(60):
+            value = f"{h:02d}:{m:02d}"
+            assert time_24h(*split_12h(value)) == value
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("21:00", "9:00 PM"), ("09:00", "9:00 AM"), ("00:05", "12:05 AM"), ("12:00", "12:00 PM"),
+    ("oops", "oops"),
+])
+def test_time_12h(value, expected):
+    from reeldrop.dashboard_helpers import time_12h
+    assert time_12h(value) == expected
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("2026-11-15 21:05:09", "15 Nov 2026, 9:05 PM"),
+    ("2026-01-02 00:00:00", "2 Jan 2026, 12:00 AM"),
+    ("never", "never"), ("-", "-"), (None, ""), ("", ""),
+])
+def test_timestamp_12h(value, expected):
+    from reeldrop.dashboard_helpers import timestamp_12h
+    assert timestamp_12h(value) == expected
+
+
+def test_test_send_status():
+    from reeldrop.dashboard_helpers import test_send_status
+    assert test_send_status(lambda k, d=None: d) == {"requested": False, "result": "", "at": ""}
+    store = {"test_send_requested": "1", "test_send_result": "@a: sent 1/1",
+             "test_send_at": "2026-11-15 21:00:00"}
+    assert test_send_status(lambda k, d=None: store.get(k, d)) == {
+        "requested": True, "result": "@a: sent 1/1", "at": "2026-11-15 21:00:00"}

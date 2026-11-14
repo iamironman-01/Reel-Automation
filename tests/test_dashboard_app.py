@@ -190,3 +190,51 @@ def test_private_schedule_code_is_offered_on_the_free_plan(app, monkeypatch):
     assert box
     code = [c.value for c in at.code]
     assert base64.b64encode(live.read_text(encoding="utf-8").encode()).decode() in code
+
+
+def test_times_are_shown_in_12_hour_format(app):
+    at, _ = app
+    log_in(at)
+    friends_table = at.dataframe[0].value
+    assert list(friends_table["Time (IST)"]) == ["8:00 PM"]
+    assert "20:00" not in friends_table.to_string()
+
+
+def test_add_a_friend_with_a_12_hour_time(app):
+    at, live = app
+    log_in(at)
+    by_label(at.text_input, "Friend's Instagram username").set_value("morning_friend")
+    hour = [s for s in at.selectbox if s.label == "Hour"][0]
+    minute = [s for s in at.selectbox if s.label == "Minute"][0]
+    am_pm = [s for s in at.selectbox if s.label == "AM / PM"][0]
+    hour.set_value(9)
+    minute.set_value(30)
+    am_pm.set_value("AM")
+    by_label(at.button, "Add schedule").click().run()
+    assert not at.exception and not at.error
+    times = {r.recipient: r.time for r in load_config(str(live)).rules}
+    assert times["morning_friend"] == "09:30"
+
+
+def test_test_send_button_sets_the_request(app):
+    from reeldrop import settings
+
+    at, _ = app
+    log_in(at)
+    by_label(at.button, "Send a test reel to every friend").click().run()
+    assert not at.exception
+    assert settings.get("test_send_requested") == "1"
+    assert any("Test send requested for 1 friend" in s.value for s in at.success)
+    assert not [b for b in at.button if b.label == "Send a test reel to every friend"]
+    assert any("waiting for the scheduler" in i.value for i in at.info)
+
+
+def test_last_test_result_is_shown(app):
+    from reeldrop import settings
+
+    at, _ = app
+    settings.set_("test_send_result", "@first_friend: sent 1/1")
+    settings.set_("test_send_at", "2026-11-15 21:05:00")
+    log_in(at)
+    assert any("15 Nov 2026, 9:05 PM" in m.value and "sent 1/1" in m.value
+               for m in at.markdown)

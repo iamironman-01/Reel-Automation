@@ -25,8 +25,10 @@ CONFIG_PATH = schedules_path()   # SCHEDULES_PATH env, default config/schedules.
 RELOAD_INTERVAL_SECONDS = 60
 DISCOVERY_JOB_ID = "__discovery__"
 DISCOVERY_INTERVAL_SECONDS = 60
+TEST_SEND_JOB_ID = "__test_send__"
+TEST_SEND_INTERVAL_SECONDS = 20
 # Scheduler jobs that are not rule jobs; reload and rule registration must never touch them.
-SYSTEM_JOB_IDS = frozenset({RELOAD_JOB_ID, DISCOVERY_JOB_ID})
+SYSTEM_JOB_IDS = frozenset({RELOAD_JOB_ID, DISCOVERY_JOB_ID, TEST_SEND_JOB_ID})
 
 
 def setup_logging():
@@ -174,6 +176,98 @@ def build_client_provider(sender):
         return None
 
 
+# --- "Send a test reel to every friend" (dashboard button) ------------------------
+# The dashboard never logs in to Instagram. Its button only sets a flag; this job sends.
+TEST_SEND_REQUEST_KEY = "test_send_requested"
+TEST_SEND_RESULT_KEY = "test_send_result"
+TEST_SEND_AT_KEY = "test_send_at"
+TEST_RULE_NAME = "test_send"                   # shows up in the send history
+
+_RESULT_TEXT = {
+    "paused": "skipped, sending is paused",
+    "quiet": "skipped, today is a quiet day",
+    "cap": "skipped, the daily cap is reached",
+    "empty": "no reel waiting for this friend",
+}
+
+
+def describe_run(result) -> str:
+    result = result or {}
+    status = result.get("status")
+    if status in ("sent", "blocked"):
+        text = f"sent {result.get('sent', 0)}/{result.get('total', 0)}"
+        return text + (" - Instagram blocked the account, sending is paused"
+                       if status == "blocked" else "")
+    return _RESULT_TEXT.get(status, "not run")
+
+
+def friends_in(cfg) -> list:
+    """Each recipient of a rule once, in the order the rules list them."""
+    seen = []
+    for rule in cfg.rules:
+        if rule.recipient not in seen:
+            seen.append(rule.recipient)
+    return seen
+
+
+def send_test_reels(cfg, sender, runner=None, sleep=None, paused=None) -> str:
+    """Send one waiting reel to every friend now, through the normal rule runner.
+
+    Pause, quiet days, the daily cap, the duplicate guard and block handling all apply,
+    exactly as for a scheduled drop. Returns a one-line summary.
+    """
+    from reeldrop.config import Rule
+    from reeldrop.settings import is_paused
+
+    runner = runner or run_rule
+    sleep = sleep or time.sleep
+    paused = paused or is_paused
+    friends = friends_in(cfg)
+    if not friends:
+        return "Not run: there are no friends in the schedule"
+    parts = []
+    for i, friend in enumerate(friends):
+        if i:
+            if paused():
+                parts.append("stopped: sending is paused")
+                break
+            sleep(cfg.gap_seconds)
+        rule = Rule(name=TEST_RULE_NAME, days="*", time="00:00", count=1, recipient=friend)
+        parts.append(f"@{friend}: {describe_run(runner(rule, cfg, sender))}")
+    return "; ".join(parts)
+
+
+def check_test_send_request(sender, path=None, loader=None, runner=None, sleep=None):
+    """Scheduler job: if the dashboard asked for a test send, run it once and record it."""
+    from reeldrop.db import now
+    from reeldrop.settings import get, set_
+
+    try:
+        if get(TEST_SEND_REQUEST_KEY, "0") != "1":
+            return None
+        set_(TEST_SEND_REQUEST_KEY, "0")      # one press, one run, even if it fails
+    except Exception as e:
+        log.warning("Could not read the test send request: %s", e)
+        return None
+    try:
+        cfg = (loader or load_config)(path or CONFIG_PATH)
+    except Exception as e:
+        summary = f"Not run: the schedule could not be loaded ({e})"
+    else:
+        log.info("Test send requested from the dashboard")
+        try:
+            summary = send_test_reels(cfg, sender, runner=runner, sleep=sleep)
+        except Exception as e:
+            summary = f"Failed: {type(e).__name__}: {e}"
+    log.info("Test send: %s", summary)
+    try:
+        set_(TEST_SEND_RESULT_KEY, summary)
+        set_(TEST_SEND_AT_KEY, now())
+    except Exception as e:
+        log.warning("Could not record the test send result: %s", e)
+    return summary
+
+
 SENDER_ERROR_KEY = "sender_error"            # read by the dashboard header
 SENDER_ERROR_AT_KEY = "sender_error_at"
 DEFAULT_LOGIN_RETRY_MINUTES = 60
@@ -294,6 +388,16 @@ def main():
         seconds=DISCOVERY_INTERVAL_SECONDS,
         args=[get_client],
         id=DISCOVERY_JOB_ID,
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    sched.add_job(
+        check_test_send_request,
+        "interval",
+        seconds=TEST_SEND_INTERVAL_SECONDS,
+        args=[sender],
+        id=TEST_SEND_JOB_ID,
         replace_existing=True,
         coalesce=True,
         max_instances=1,

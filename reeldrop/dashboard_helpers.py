@@ -8,7 +8,7 @@ import json
 import os
 import shutil
 import tempfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Callable
 
 PLACEHOLDER_PASSWORD = "change-me"
@@ -348,3 +348,73 @@ def save_session_file(raw: bytes, path: str) -> None:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise
+
+
+# --- 12-hour times ----------------------------------------------------------------
+# Rules are stored as 24-hour "HH:MM" in schedules.yaml; the dashboard shows and takes
+# 12-hour times with AM/PM.
+
+AM_PM = ("AM", "PM")
+
+
+def split_12h(value: str, fallback=(8, 0, "PM")) -> tuple[int, int, str]:
+    """"20:05" -> (8, 5, "PM"). Anything unreadable gives `fallback`."""
+    try:
+        hours, minutes = (int(x) for x in str(value).strip().split(":"))
+    except (ValueError, TypeError):
+        return fallback
+    if not (0 <= hours <= 23 and 0 <= minutes <= 59):
+        return fallback
+    return (hours % 12 or 12), minutes, ("AM" if hours < 12 else "PM")
+
+
+def time_24h(hour12, minute, am_pm) -> str:
+    """(8, 5, "PM") -> "20:05". Raises ValueError for impossible input."""
+    if (isinstance(hour12, bool) or isinstance(minute, bool)
+            or not isinstance(hour12, int) or not isinstance(minute, int)):
+        raise ValueError("Hour and minute must be whole numbers")
+    if not 1 <= hour12 <= 12 or not 0 <= minute <= 59:
+        raise ValueError("Pick an hour from 1 to 12 and a minute from 0 to 59")
+    am_pm = str(am_pm).strip().upper()
+    if am_pm not in AM_PM:
+        raise ValueError("Pick AM or PM")
+    hours = hour12 % 12 + (12 if am_pm == "PM" else 0)
+    return f"{hours:02d}:{minute:02d}"
+
+
+def time_12h(value: str) -> str:
+    """"20:05" -> "8:05 PM", "00:30" -> "12:30 AM". Unreadable text is returned as is."""
+    parsed = split_12h(value, fallback=None)
+    if parsed is None:
+        return str(value)
+    hour, minute, am_pm = parsed
+    return f"{hour}:{minute:02d} {am_pm}"
+
+
+def timestamp_12h(value) -> str:
+    """"2026-11-15 21:05:09" -> "15 Nov 2026, 9:05 PM". Unreadable values are returned as is."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    try:
+        moment = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return text
+    return f"{moment.day} {moment:%b %Y}, {time_12h(f'{moment:%H:%M}')}"
+
+
+# --- test send ---------------------------------------------------------------------
+
+TEST_SEND_REQUEST_KEY = "test_send_requested"
+TEST_SEND_RESULT_KEY = "test_send_result"
+TEST_SEND_AT_KEY = "test_send_at"
+
+
+def test_send_status(get_setting: Callable[..., object]) -> dict:
+    """The dashboard's view of the 'send a test reel to every friend' request."""
+    return {
+        "requested": get_setting(TEST_SEND_REQUEST_KEY, "0") == "1",
+        "result": str(get_setting(TEST_SEND_RESULT_KEY, "") or ""),
+        "at": str(get_setting(TEST_SEND_AT_KEY, "") or ""),
+    }
+

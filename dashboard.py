@@ -12,7 +12,9 @@ load_dotenv()
 from reeldrop import config_editor as editor
 from reeldrop.config import PICK_MODES, ensure_schedules_file, load_config, schedules_path
 from reeldrop.dashboard_helpers import (
+    AM_PM,
     SENDER_RETRY_KEY,
+    TEST_SEND_REQUEST_KEY,
     STATUS_FILTERS,
     add_links,
     daily_counts,
@@ -28,6 +30,11 @@ from reeldrop.dashboard_helpers import (
     save_schedules,
     save_session_file,
     sender_status,
+    split_12h,
+    test_send_status,
+    time_12h,
+    time_24h,
+    timestamp_12h,
     weekly_counts,
 )
 from reeldrop.db import connect, init_db
@@ -117,12 +124,28 @@ def apply_change(change, message: str) -> None:
     st.rerun()
 
 
-def as_time(text: str, fallback=datetime.time(20, 0)) -> datetime.time:
-    try:
-        hours, minutes = str(text).split(":")
-        return datetime.time(int(hours), int(minutes))
-    except (ValueError, TypeError):
-        return fallback
+HOURS_12 = list(range(1, 13))
+
+
+def time_picker(value_24h: str, key: str):
+    """Hour / minute / AM-PM pickers in one row. Returns the choice, or None if invalid."""
+    hour, minute, am_pm = split_12h(value_24h)
+    minutes = sorted(set(range(0, 60, 5)) | {minute})
+    c1, c2, c3 = st.columns(3)
+    picked_hour = c1.selectbox("Hour", HOURS_12, index=HOURS_12.index(hour), key=f"{key}_h")
+    picked_minute = c2.selectbox("Minute", minutes, index=minutes.index(minute),
+                                 format_func=lambda m: f"{m:02d}", key=f"{key}_m")
+    picked_am_pm = c3.selectbox("AM / PM", AM_PM, index=AM_PM.index(am_pm), key=f"{key}_ap")
+    return picked_hour, picked_minute, picked_am_pm
+
+
+def show_times_12h(df, columns):
+    """Copy of `df` with the named timestamp columns shown in 12-hour time."""
+    out = df.copy()
+    for col in columns:
+        if col in out.columns:
+            out[col] = out[col].map(timestamp_12h)
+    return out
 
 
 # --- header ---
@@ -152,7 +175,7 @@ c4.metric("Sender", sender_name)
 
 if send_state["error"]:
     st.error(
-        f"The scheduler could not start its sender ({send_state['at'] or 'time unknown'}), "
+        f"The scheduler could not start its sender ({timestamp_12h(send_state['at']) or 'time unknown'}), "
         f"so nothing is being sent: {send_state['error']} See the Settings tab."
     )
 if sender_name == "dry_run":
@@ -185,17 +208,50 @@ with t_friends:
         rules = editor.rule_rows(raw_cfg)
         if rules:
             table = pd.DataFrame(rules)[["friend", "time", "days", "count", "pick", "send_note", "name"]]
-            table.columns = ["Friend", "Time", "Days", "Reels", "Order", "Send note", "Schedule name"]
+            table["time"] = table["time"].map(time_12h)
+            table.columns = ["Friend", "Time (IST)", "Days", "Reels", "Order", "Send note",
+                             "Schedule name"]
             st.dataframe(table, use_container_width=True, hide_index=True)
         else:
             st.info("No friends yet. Add the first one below.")
 
+        st.subheader("Test: send one reel to every friend now")
+        try:
+            test_state = test_send_status(get_setting)
+        except sqlite3.Error as e:
+            st.error(f"Could not read the test send status: {e}")
+            test_state = None
+        if test_state is not None:
+            st.caption("Sends one waiting reel to each friend right away, through the same "
+                       "checks as a normal drop: pause, quiet days, the daily cap (test reels "
+                       "count towards it) and the gap between reels. The scheduler does the "
+                       "sending within about 20 seconds.")
+            if sender_name == "dry_run":
+                st.caption("Dry-run mode: the reels are only printed in the log, nothing "
+                           "reaches Instagram.")
+            if test_state["requested"]:
+                st.info("A test send is requested and waiting for the scheduler. "
+                        "Reload this page in a minute to see the result.")
+            elif st.button("Send a test reel to every friend", disabled=not known_friends):
+                try:
+                    set_setting(TEST_SEND_REQUEST_KEY, "1")
+                except sqlite3.Error as e:
+                    st.error(f"Could not request the test send: {e}")
+                else:
+                    st.session_state["flash"] = ("Test send requested for "
+                                                 f"{len(known_friends)} friend(s).")
+                    st.rerun()
+            if test_state["result"]:
+                st.write(f"**Last test** ({timestamp_12h(test_state['at'])}): "
+                         f"{test_state['result']}")
+
         st.subheader("Add a friend or another schedule")
         with st.form("add_friend", clear_on_submit=True):
-            a1, a2, a3 = st.columns(3)
+            a1, a2 = st.columns(2)
             new_friend = a1.text_input("Friend's Instagram username", placeholder="friend_username")
-            new_time = a2.time_input("Send at", value=datetime.time(20, 0), step=300)
-            new_count = a3.number_input("Reels per send", min_value=1, max_value=20, value=3, step=1)
+            new_count = a2.number_input("Reels per send", min_value=1, max_value=20, value=3, step=1)
+            st.caption("Send at (IST)")
+            new_time = time_picker("20:00", "add_time")
             new_days = st.multiselect(
                 "Days", editor.ALL_DAYS, default=list(editor.ALL_DAYS),
                 format_func=lambda d: editor.DAY_LABELS[d],
@@ -208,7 +264,7 @@ with t_friends:
             if st.form_submit_button("Add schedule"):
                 apply_change(
                     lambda d: editor.add_friend_rule(
-                        d, new_friend, f"{new_time:%H:%M}", int(new_count), new_days,
+                        d, new_friend, time_24h(*new_time), int(new_count), new_days,
                         new_pick, new_note),
                     f"Added a schedule for @{editor.clean_username(new_friend)}.",
                 )
@@ -220,20 +276,21 @@ with t_friends:
             by_name = {r["name"]: r for r in rules}
             chosen = st.selectbox(
                 "Schedule", list(by_name),
-                format_func=lambda n: f"@{by_name[n]['friend']} · {by_name[n]['time']} · "
+                format_func=lambda n: f"@{by_name[n]['friend']} · {time_12h(by_name[n]['time'])} · "
                                       f"{by_name[n]['days']} · {by_name[n]['count']} reel(s)",
             )
             rule = by_name[chosen]
             with st.form(f"edit_{chosen}"):
-                e1, e2, e3 = st.columns(3)
+                e1, e2 = st.columns(2)
                 ed_friend = e1.text_input("Friend's Instagram username", value=rule["friend"])
-                ed_time = e2.time_input("Send at", value=as_time(rule["time"]), step=300)
                 try:
                     current_count = max(1, min(20, int(rule["count"])))
                 except (TypeError, ValueError):
                     current_count = 1
-                ed_count = e3.number_input("Reels per send", min_value=1, max_value=20,
+                ed_count = e2.number_input("Reels per send", min_value=1, max_value=20,
                                            value=current_count, step=1)
+                st.caption("Send at (IST)")
+                ed_time = time_picker(rule["time"], f"edit_time_{chosen}")
                 ed_days = st.multiselect("Days", editor.ALL_DAYS,
                                          default=editor.days_to_list(rule["days"]),
                                          format_func=lambda d: editor.DAY_LABELS[d])
@@ -248,7 +305,7 @@ with t_friends:
             if save_clicked:
                 apply_change(
                     lambda d: editor.update_rule(
-                        d, chosen, ed_friend, f"{ed_time:%H:%M}", int(ed_count), ed_days,
+                        d, chosen, ed_friend, time_24h(*ed_time), int(ed_count), ed_days,
                         ed_pick, ed_note),
                     f"Saved the schedule for @{editor.clean_username(ed_friend)}.",
                 )
@@ -284,7 +341,8 @@ with t_topics:
             "Check every",
             f"{disc['check_every_minutes']} min" if disc["check_every_minutes"] is not None else "-",
         )
-        st.write(f"**Last refill:** {disc['last_run']}  \n**Last result:** {disc['last_summary']}")
+        st.write(f"**Last refill:** {timestamp_12h(disc['last_run'])}  \n"
+                 f"**Last result:** {disc['last_summary']}")
         if disc["refill_pending"]:
             st.info("A refill is requested and waiting for the scheduler.")
         if st.button("Refill now"):
@@ -404,7 +462,8 @@ with t_queue:
         st.error(f"Could not read the queue: {e}")
         df = None
     if df is not None:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(show_times_12h(df, ["added_at"]), use_container_width=True,
+                     hide_index=True)
         if df.empty:
             st.caption("No reels to show.")
         else:
@@ -495,7 +554,8 @@ with t_hist:
             log = pd.read_sql_query(
                 "SELECT * FROM send_log ORDER BY id DESC LIMIT 200", c
             )
-        st.dataframe(log, use_container_width=True, hide_index=True)
+        st.dataframe(show_times_12h(log, ["sent_at"]), use_container_width=True,
+                     hide_index=True)
     except sqlite3.Error as e:
         st.error(f"Could not read history: {e}")
 
@@ -560,7 +620,7 @@ with t_set:
     st.subheader("Instagram login")
     st.write(f"**Sender:** `{sender_name}` (set by the `SENDER` environment variable)")
     if send_state["error"]:
-        st.error(f"Last start failed at {send_state['at'] or 'an unknown time'}: "
+        st.error(f"Last start failed at {timestamp_12h(send_state['at']) or 'an unknown time'}: "
                  f"{send_state['error']}")
         st.caption("After a failed Instagram login the scheduler waits (60 minutes by "
                    "default) before trying again, so the account is not flagged.")
@@ -603,7 +663,8 @@ with t_adv:
             st.code(base64.b64encode(raw_text.encode("utf-8")).decode("ascii"),
                     language=None, wrap_lines=True)
     st.caption("The schedule file behind every form on this dashboard. Edit it by hand only "
-               "if a form cannot do what you need. Always quote times, like \"20:00\".")
+               "if a form cannot do what you need. Times in this file are 24-hour IST "
+               "(\"21:00\" is 9:00 PM); always quote them, like \"21:00\".")
     if raw_text is not None:
         new_text = st.text_area("schedules.yaml", raw_text, height=420)
         if st.button("Save file"):

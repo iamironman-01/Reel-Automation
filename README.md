@@ -156,13 +156,17 @@ Things to know:
 
 | Tab | What you can do |
 |-----|-----------------|
-| **Friends** | Add a friend (Instagram username) with a time, days and reels per send. Change or remove a schedule, or remove a friend with all their schedules |
+| **Friends** | Add a friend (Instagram username) with a time (12-hour, AM/PM, IST), days and reels per send. Change or remove a schedule, or remove a friend with all their schedules. **Send a test reel to every friend** sends one waiting reel to each friend right away |
 | **Reel topics** | Choose where reels come from (Explore, creators, saved collections, hashtags), keep or drop reels by caption keywords, set the refill numbers, turn automatic finding on or off, and ask for a refill now |
 | **Queue** | See, remove, reorder and assign waiting reels |
 | **Add reels** | Paste specific reel links |
 | **History**, **Stats** | What was sent and when |
 | **Settings** | Pause or resume, daily cap, gap between reels, quiet days, Instagram login status with **Retry login now**, and upload of a session file |
 | **Advanced** | The raw `schedules.yaml`, for anything a form cannot do |
+
+The dashboard shows every time in 12-hour format with AM/PM; `schedules.yaml` keeps 24-hour times (`"21:00"` is 9:00 PM).
+
+**Test send.** The button only sets a flag; the scheduler sees it within about 20 seconds and sends one waiting reel to each friend through the normal rule runner, so pause, quiet days, the daily cap (test reels count towards it), the gap between reels, the duplicate guard and block handling all apply. The result appears under the button and in History as rule `test_send`. With `SENDER=dry_run` nothing reaches Instagram.
 
 Every form validates the whole schedule file before saving; a rejected change leaves the old file untouched. The scheduler picks changes up within about a minute. A form save rewrites the file, so hand-written comments in it are not kept. The dashboard never logs in to Instagram itself.
 

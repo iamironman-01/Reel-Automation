@@ -524,7 +524,7 @@ def test_main_registers_reload_job(main_mod, monkeypatch):
     monkeypatch.setattr(FakeSched, "__init__", init)
     main_mod.main()
     sched = sched_holder[0]
-    assert set(sched.jobs) == {"a", "__reload__", "__discovery__"}
+    assert set(sched.jobs) == {"a", "__reload__", "__discovery__", "__test_send__"}
     rj = sched.jobs["__reload__"]
     assert rj.func is main_mod.reload_if_changed and rj.trigger == "interval"
     assert rj.kwargs["seconds"] == 60 and rj.kwargs["replace_existing"] is True

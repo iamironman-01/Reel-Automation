@@ -361,7 +361,7 @@ def test_main_starts_scheduler_and_handles_ctrl_c(main_mod, monkeypatch):
     main_mod.main()                               # must not raise
     sched = FakeScheduler.instances[0]
     rule_jobs = [j for j in sched.jobs
-                 if j[2]["id"] not in ("__reload__", "__discovery__")]   # + the two system jobs
+                 if j[2]["id"] not in ("__reload__", "__discovery__", "__test_send__")]   # + the two system jobs
     assert len(rule_jobs) == 1 and sched.shutdown_called
 
 
@@ -474,3 +474,160 @@ def test_retry_requested_is_true_once(main_mod, temp_db):
     settings.set_(main_mod.SENDER_RETRY_KEY, "1")
     assert main_mod.retry_requested() is True
     assert main_mod.retry_requested() is False
+
+
+# --- run_rule returns what it did -------------------------------------------------
+
+def test_run_rule_reports_its_result(temp_db, monkeypatch):
+    from reeldrop import job as job_mod
+    from reeldrop import queue as q
+    from reeldrop.config import Config, Rule
+    from reeldrop.settings import set_paused
+
+    monkeypatch.setattr(job_mod.time, "sleep", lambda s: None)
+    monkeypatch.setattr(job_mod, "notify_me", lambda *a, **k: None)
+    sent = []
+
+    class S:
+        name = "fake"
+
+        def send(self, r, url):
+            sent.append((r, url))
+
+    rule = Rule(name="r", days="*", time="09:00", count=2, recipient="pal")
+    cfg = Config(daily_cap=5, gap_seconds=0, rules=[rule])
+    assert job_mod.run_rule(rule, cfg, S()) == {"status": "empty", "sent": 0, "total": 0}
+    q.add_reel("https://www.instagram.com/reel/AAA/")
+    assert job_mod.run_rule(rule, cfg, S()) == {"status": "sent", "sent": 1, "total": 1}
+    set_paused(True)
+    assert job_mod.run_rule(rule, cfg, S())["status"] == "paused"
+    set_paused(False)
+    capped = Config(daily_cap=1, gap_seconds=0, rules=[rule])
+    assert job_mod.run_rule(rule, capped, S())["status"] == "cap"
+    quiet = Config(daily_cap=5, gap_seconds=0, rules=[rule], quiet_days=[job_mod._today(cfg)])
+    assert job_mod.run_rule(rule, quiet, S())["status"] == "quiet"
+    assert len(sent) == 1
+
+
+# --- test send (dashboard button -> scheduler job) ----------------------------------
+
+def _cfg_with_friends(*friends, gap=7):
+    from reeldrop.config import Config, Rule
+    rules = [Rule(name=f"r{i}", days="*", time="09:00", count=2, recipient=f)
+             for i, f in enumerate(friends)]
+    return Config(daily_cap=8, gap_seconds=gap, rules=rules)
+
+
+def test_send_test_reels_sends_one_reel_to_each_friend_once(main_mod):
+    calls, sleeps = [], []
+
+    def runner(rule, cfg, sender):
+        calls.append((rule.name, rule.recipient, rule.count))
+        return {"status": "sent", "sent": 1, "total": 1}
+
+    cfg = _cfg_with_friends("pal", "buddy", "pal")          # pal has two rules
+    summary = main_mod.send_test_reels(cfg, object(), runner=runner, sleep=sleeps.append,
+                                       paused=lambda: False)
+    assert calls == [("test_send", "pal", 1), ("test_send", "buddy", 1)]
+    assert sleeps == [7]                                     # the gap between friends
+    assert summary == "@pal: sent 1/1; @buddy: sent 1/1"
+
+
+def test_send_test_reels_describes_every_outcome(main_mod):
+    results = iter([{"status": "empty"}, {"status": "cap"}, {"status": "quiet"},
+                    {"status": "paused"}, {"status": "sent", "sent": 0, "total": 1}])
+    cfg = _cfg_with_friends("a", "b", "c", "d", "e", gap=0)
+    summary = main_mod.send_test_reels(cfg, object(), runner=lambda *a: next(results),
+                                       sleep=lambda s: None, paused=lambda: False)
+    assert summary == ("@a: no reel waiting for this friend; "
+                       "@b: skipped, the daily cap is reached; "
+                       "@c: skipped, today is a quiet day; "
+                       "@d: skipped, sending is paused; @e: sent 0/1")
+
+
+def test_send_test_reels_stops_after_a_block(main_mod):
+    state = {"paused": False}
+
+    def runner(rule, cfg, sender):
+        state["paused"] = True
+        return {"status": "blocked", "sent": 0, "total": 1}
+
+    summary = main_mod.send_test_reels(_cfg_with_friends("a", "b"), object(), runner=runner,
+                                       sleep=lambda s: None, paused=lambda: state["paused"])
+    assert summary.startswith("@a: sent 0/1 - Instagram blocked")
+    assert summary.endswith("stopped: sending is paused")
+    assert "@b" not in summary
+
+
+def test_send_test_reels_without_friends(main_mod):
+    from reeldrop.config import Config
+    assert main_mod.send_test_reels(Config(), object(), runner=lambda *a: 1 / 0) == \
+        "Not run: there are no friends in the schedule"
+
+
+def test_check_test_send_request_runs_once_per_request(main_mod, temp_db):
+    from reeldrop import settings
+    ran = []
+
+    def runner(rule, cfg, sender):
+        ran.append(rule.recipient)
+        return {"status": "sent", "sent": 1, "total": 1}
+
+    loader = lambda path: _cfg_with_friends("pal", gap=0)
+    assert main_mod.check_test_send_request(object(), loader=loader, runner=runner) is None
+    assert ran == []                                          # nothing requested yet
+    settings.set_(main_mod.TEST_SEND_REQUEST_KEY, "1")
+    assert main_mod.check_test_send_request(object(), loader=loader, runner=runner) == \
+        "@pal: sent 1/1"
+    assert settings.get(main_mod.TEST_SEND_REQUEST_KEY) == "0"
+    assert settings.get(main_mod.TEST_SEND_RESULT_KEY) == "@pal: sent 1/1"
+    assert settings.get(main_mod.TEST_SEND_AT_KEY)
+    main_mod.check_test_send_request(object(), loader=loader, runner=runner)
+    assert ran == ["pal"]                                     # not repeated
+
+
+def test_check_test_send_request_records_problems(main_mod, temp_db):
+    from reeldrop import settings
+
+    def bad_loader(path):
+        raise ValueError("rules is not a list")
+
+    settings.set_(main_mod.TEST_SEND_REQUEST_KEY, "1")
+    summary = main_mod.check_test_send_request(object(), loader=bad_loader)
+    assert summary.startswith("Not run: the schedule could not be loaded")
+    assert settings.get(main_mod.TEST_SEND_REQUEST_KEY) == "0"
+
+    def boom(rule, cfg, sender):
+        raise RuntimeError("db gone")
+
+    settings.set_(main_mod.TEST_SEND_REQUEST_KEY, "1")
+    summary = main_mod.check_test_send_request(
+        object(), loader=lambda p: _cfg_with_friends("pal", gap=0), runner=boom)
+    assert summary == "Failed: RuntimeError: db gone"
+
+
+def test_test_send_job_id_is_a_protected_system_job(main_mod):
+    assert main_mod.TEST_SEND_JOB_ID in main_mod.SYSTEM_JOB_IDS
+
+
+def test_real_runner_sends_a_test_reel_end_to_end(main_mod, temp_db, monkeypatch):
+    from reeldrop import job as job_mod
+    from reeldrop import queue as q
+
+    monkeypatch.setattr(job_mod, "notify_me", lambda *a, **k: None)
+    sent = []
+
+    class S:
+        name = "fake"
+
+        def send(self, r, url):
+            sent.append((r, url))
+
+    q.add_reel("https://www.instagram.com/reel/AAA/")
+    q.add_reel("https://www.instagram.com/reel/BBB/")
+    summary = main_mod.send_test_reels(_cfg_with_friends("pal", "buddy", gap=0), S(),
+                                       sleep=lambda s: None)
+    assert summary == "@pal: sent 1/1; @buddy: sent 1/1"
+    assert sorted(r for r, _ in sent) == ["buddy", "pal"]
+    assert len({u for _, u in sent}) == 2                    # different reels, none twice
+    assert [r["status"] for r in q.list_reels()] == ["sent", "sent"]
