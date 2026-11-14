@@ -2,8 +2,10 @@
 #
 # Free plan limits (see DEPLOY_RENDER.md):
 #   * it sleeps after 15 minutes without inbound traffic; while asleep nothing is sent.
-#     Keep it awake with an outside pinger (e.g. cron-job.org every 10 minutes on
-#     https://<your-service>.onrender.com/_stcore/health).
+#     start.py pings its own RENDER_EXTERNAL_URL every 9 minutes to stay awake
+#     (KEEP_ALIVE_MINUTES, 0 = off).
+# This file is only read by a Render Blueprint. A web service created by hand
+# (DEPLOY_RENDER.md) needs the same settings entered in the Render form.
 #   * no persistent disk: the database, queue, history and dashboard edits are lost on
 #     every restart, redeploy or sleep. Friends and sources that must survive go in
 #     config/schedules.yaml on this branch; the Instagram login survives through

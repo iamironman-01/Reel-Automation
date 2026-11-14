@@ -400,3 +400,149 @@ def test_import_has_no_side_effects_on_signals():
     w = World()
     w.supervisor()
     assert signal.getsignal(signal.SIGTERM) is before
+
+
+# --- keep-alive (Render free plan) ------------------------------------------------
+
+def test_keep_alive_off_without_a_url():
+    assert start.keep_alive_settings({}) is None
+    assert start.keep_alive_settings({"KEEP_ALIVE_MINUTES": "5"}) is None
+
+
+def test_keep_alive_uses_render_url_and_nine_minutes_by_default():
+    env = {"RENDER_EXTERNAL_URL": "https://reeldrop.onrender.com/"}
+    assert start.keep_alive_settings(env) == (
+        "https://reeldrop.onrender.com/_stcore/health", 9 * 60)
+
+
+def test_keep_alive_url_overrides_render_url_and_minutes_are_configurable():
+    env = {"RENDER_EXTERNAL_URL": "https://a.onrender.com",
+           "KEEP_ALIVE_URL": "https://b.example.com", "KEEP_ALIVE_MINUTES": "14"}
+    assert start.keep_alive_settings(env) == ("https://b.example.com/_stcore/health", 840)
+
+
+def test_keep_alive_can_be_turned_off():
+    env = {"RENDER_EXTERNAL_URL": "https://a.onrender.com", "KEEP_ALIVE_MINUTES": "0"}
+    assert start.keep_alive_settings(env) is None
+
+
+@pytest.mark.parametrize("env", [
+    {"RENDER_EXTERNAL_URL": "https://a.onrender.com", "KEEP_ALIVE_MINUTES": "15"},
+    {"RENDER_EXTERNAL_URL": "https://a.onrender.com", "KEEP_ALIVE_MINUTES": "abc"},
+    {"RENDER_EXTERNAL_URL": "https://a.onrender.com", "KEEP_ALIVE_MINUTES": "-1"},
+    {"KEEP_ALIVE_URL": "ftp://a.onrender.com"},
+    {"KEEP_ALIVE_URL": "a.onrender.com"},
+])
+def test_keep_alive_rejects_bad_settings(env):
+    with pytest.raises(ValueError):
+        start.keep_alive_settings(env)
+
+
+class _Response:
+    def __init__(self, status):
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+@pytest.mark.parametrize("status,ok", [(200, True), (302, True), (404, False), (503, False)])
+def test_ping_once_status(status, ok):
+    seen = []
+
+    def opener(url, timeout):
+        seen.append((url, timeout))
+        return _Response(status)
+
+    assert start.ping_once("https://x/_stcore/health", opener=opener) == (ok, f"HTTP {status}")
+    assert seen == [("https://x/_stcore/health", start.KEEP_ALIVE_TIMEOUT_SECONDS)]
+
+
+def test_ping_once_never_raises():
+    def opener(url, timeout):
+        raise ConnectionError("down")
+
+    assert start.ping_once("https://x", opener=opener) == (False, "ConnectionError")
+
+
+class _FakeStop:
+    """Event stand-in: wait() returns True (stop) after `rounds` waits."""
+
+    def __init__(self, rounds):
+        self.rounds = rounds
+        self.waits = []
+
+    def wait(self, timeout):
+        self.waits.append(timeout)
+        return len(self.waits) > self.rounds
+
+
+def test_keep_alive_loop_pings_each_interval_and_logs_only_changes():
+    results = iter([(True, "HTTP 200"), (False, "URLError"), (False, "URLError"),
+                    (True, "HTTP 200")])
+    pings, logs = [], []
+    stop = _FakeStop(rounds=4)
+
+    def ping(url):
+        pings.append(url)
+        return next(results)
+
+    start.keep_alive_loop("https://x/h", 540, stop, ping=ping, log=logs.append)
+    assert pings == ["https://x/h"] * 4
+    assert stop.waits == [540] * 5                     # waits first, so no ping at start
+    assert len(logs) == 3 and "ping works again" in logs[-1]
+
+
+def test_start_keep_alive_starts_a_daemon_thread(capsys):
+    made = []
+
+    class FakeThread:
+        def __init__(self, target, args, name, daemon):
+            made.append((target, args[:2], name, daemon))
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+    thread, stop = start.start_keep_alive({"RENDER_EXTERNAL_URL": "https://r.onrender.com"},
+                                          thread_factory=FakeThread)
+    assert thread.started and not stop.is_set()
+    assert made == [(start.keep_alive_loop, ("https://r.onrender.com/_stcore/health", 540),
+                     "keep-alive", True)]
+    assert "every 9 minutes" in capsys.readouterr().out
+
+
+def test_start_keep_alive_bad_setting_is_off_not_fatal(capsys):
+    assert start.start_keep_alive({"RENDER_EXTERNAL_URL": "https://r.onrender.com",
+                                   "KEEP_ALIVE_MINUTES": "60"}) is None
+    assert "off" in capsys.readouterr().err
+
+
+def test_main_starts_and_stops_keep_alive(monkeypatch):
+    import threading
+
+    monkeypatch.setattr(start.signal, "signal", lambda s, h: None)
+    started = []
+
+    class FakeSup:
+        def __init__(self, *a, **k):
+            pass
+
+        def request_shutdown(self, *a):
+            pass
+
+        def run(self):
+            return 0
+
+    def fake_start(env):
+        stop = threading.Event()
+        started.append(stop)
+        return object(), stop
+
+    monkeypatch.setattr(start, "Supervisor", FakeSup)
+    monkeypatch.setattr(start, "start_keep_alive", fake_start)
+    assert start.main({"RENDER_EXTERNAL_URL": "https://r.onrender.com"}) == 0
+    assert len(started) == 1 and started[0].is_set()

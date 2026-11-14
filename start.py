@@ -5,12 +5,21 @@ share a container. Rules:
   * dashboard exits  -> stop the scheduler, exit non-zero (Render restarts the service)
   * scheduler exits  -> keep the dashboard up, restart the scheduler with backoff
   * SIGTERM / SIGINT -> stop the scheduler first (it may be mid-send), then the dashboard
+
+Keep-alive: Render's free plan puts a web service to sleep after 15 minutes without
+inbound traffic, and a sleeping service sends nothing. When RENDER_EXTERNAL_URL (set by
+Render) or KEEP_ALIVE_URL is present, a background thread requests the service's own
+public health URL every KEEP_ALIVE_MINUTES (default 9), which counts as inbound traffic.
+KEEP_ALIVE_MINUTES=0 turns it off.
 """
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
+import urllib.parse
+import urllib.request
 
 DEFAULT_PORT = "8501"
 DEFAULT_SHUTDOWN_GRACE_SECONDS = 240
@@ -55,6 +64,74 @@ def build_commands(env):
     ]
     scheduler = [sys.executable, "main.py"]
     return dashboard, scheduler
+
+
+KEEP_ALIVE_DEFAULT_MINUTES = 9
+KEEP_ALIVE_MAX_MINUTES = 14          # Render sleeps after 15 idle minutes
+KEEP_ALIVE_PATH = "/_stcore/health"  # Streamlit's health endpoint, also Render's check
+KEEP_ALIVE_TIMEOUT_SECONDS = 30
+
+
+def keep_alive_settings(env):
+    """Return (url, interval_seconds) for the self-ping, or None when it is off.
+
+    Raises ValueError for a bad KEEP_ALIVE_MINUTES or URL.
+    """
+    raw = str(env.get("KEEP_ALIVE_MINUTES", "")).strip()
+    if raw == "0":
+        return None
+    base = (env.get("KEEP_ALIVE_URL") or env.get("RENDER_EXTERNAL_URL") or "").strip()
+    if not base:
+        return None
+    minutes = (_positive_int(raw, "KEEP_ALIVE_MINUTES", maximum=KEEP_ALIVE_MAX_MINUTES)
+               if raw else KEEP_ALIVE_DEFAULT_MINUTES)
+    parts = urllib.parse.urlsplit(base)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise ValueError("KEEP_ALIVE_URL / RENDER_EXTERNAL_URL must start with https://")
+    return base.rstrip("/") + KEEP_ALIVE_PATH, minutes * 60
+
+
+def ping_once(url, opener=urllib.request.urlopen, timeout=KEEP_ALIVE_TIMEOUT_SECONDS):
+    """Request `url` once. Returns (ok, detail); never raises."""
+    try:
+        with opener(url, timeout=timeout) as response:
+            status = getattr(response, "status", 200)
+            return 200 <= status < 400, f"HTTP {status}"
+    except Exception as exc:  # noqa: BLE001 - a failed ping must never stop the service
+        return False, type(exc).__name__
+
+
+def keep_alive_loop(url, interval, stop, ping=ping_once, log=None):
+    """Ping `url` every `interval` seconds until `stop` (a threading.Event) is set."""
+    log = log or (lambda msg: print(f"[keep-alive] {msg}", flush=True))
+    failures = 0
+    while not stop.wait(interval):
+        ok, detail = ping(url)
+        if ok:
+            if failures:
+                log(f"ping works again ({detail})")
+            failures = 0
+        else:
+            failures += 1
+            log(f"ping failed ({detail}); trying again in {interval // 60} minutes")
+
+
+def start_keep_alive(env, thread_factory=threading.Thread):
+    """Start the self-ping thread if configured. Returns (thread, stop_event) or None."""
+    try:
+        settings = keep_alive_settings(env)
+    except ValueError as exc:
+        print(f"[keep-alive] off: {exc}", file=sys.stderr, flush=True)
+        return None
+    if settings is None:
+        return None
+    url, interval = settings
+    stop = threading.Event()
+    thread = thread_factory(target=keep_alive_loop, args=(url, interval, stop),
+                            name="keep-alive", daemon=True)
+    thread.start()
+    print(f"[keep-alive] pinging {url} every {interval // 60} minutes", flush=True)
+    return thread, stop
 
 
 def backoff_delay(failures):
@@ -176,7 +253,12 @@ def main(env=None):
     signal.signal(signal.SIGTERM, supervisor.request_shutdown)
     signal.signal(signal.SIGINT, supervisor.request_shutdown)
     print(f"[supervisor] starting ReelDrop dashboard on port {parse_port(env)}", flush=True)
-    return supervisor.run()
+    keep_alive = start_keep_alive(env)
+    try:
+        return supervisor.run()
+    finally:
+        if keep_alive:
+            keep_alive[1].set()
 
 
 if __name__ == "__main__":

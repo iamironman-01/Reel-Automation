@@ -6,7 +6,7 @@ One **web service** runs the dashboard and the scheduler together (`start.py`). 
 
 | Free plan limit | Effect on ReelDrop | What to do |
 |-----------------|--------------------|------------|
-| Sleeps after 15 minutes without inbound web traffic | While asleep the scheduler is stopped and nothing is sent | Keep it awake with an outside pinger (below) |
+| Sleeps after 15 minutes without inbound web traffic | While asleep the scheduler is stopped and nothing is sent | Built in: the app pings itself every 9 minutes (below) |
 | No persistent disk; files are wiped on every sleep, restart or redeploy | The queue, send history, pause switch and dashboard edits are lost each time | Put friends and sources in `config/schedules.yaml` on the `render-deploy` branch, and the Instagram login in `IG_SESSION_B64` |
 | 750 free hours per month per workspace | One service awake all month fits (a month has at most 744 hours) | Run only this one free service |
 | Render may restart a free service at any time | Same as a wipe | As above |
@@ -15,10 +15,11 @@ Because the history is wiped, the daily cap starts again from 0 after a restart,
 
 ### Keep it awake
 
-Use a free outside pinger, for example [cron-job.org](https://cron-job.org) or UptimeRobot:
+This is built in. Render gives every web service its public address in `RENDER_EXTERNAL_URL`, and `start.py` requests `<that address>/_stcore/health` every 9 minutes, which counts as inbound traffic, so the service never reaches 15 idle minutes. The Render log shows `[keep-alive] pinging ... every 9 minutes` at start.
 
-- URL: `https://<your-service>.onrender.com/_stcore/health`
-- Every 10 minutes
+- `KEEP_ALIVE_MINUTES` changes the interval (1 to 14), `0` turns it off.
+- It can only keep a running service awake. If the service does fall asleep (for example after a Render outage), opening the dashboard wakes it within about a minute and the pings start again.
+- As a backup you can also add an outside pinger (cron-job.org or UptimeRobot) on the same URL.
 
 ### Keep the Instagram login across restarts
 
@@ -37,21 +38,46 @@ At each start ReelDrop writes that session back to `data/session.json` and reuse
 
 Dashboard changes last only until the next restart (the dashboard shows a yellow warning about this). Set things up in the dashboard, then copy the text from the **Advanced** tab into `config/schedules.yaml` on the `render-deploy` branch and push. Render redeploys with it.
 
-## One-time setup
+## Create the web service (no Blueprint)
 
-1. **Use the `render-deploy` branch.** Render deploys that branch (see `branch:` in `render.yaml`). Push to it to redeploy.
-2. In Render: **New → Blueprint**, connect your GitHub account, and pick `iamironman-01/Reel-Automation`. Render reads `render.yaml`.
-3. Fill in the variables marked *sync: false*:
-   - `DASHBOARD_PASSWORD`: a real password (the app refuses `change-me`).
-   - Instagram route B (real Instagram DMs): `IG_USERNAME`, `IG_PASSWORD`, `IG_TOTP_SECRET` (the two-factor setup key; in a live test the login only succeeded with it) and `IG_SESSION_B64` (see above). Only with a separate test account.
-   - Telegram (optional, alerts or an alternative route): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_MY_CHAT_ID`, and `TELEGRAM_FRIEND_CHAT_ID` if Telegram is the sender.
-4. Deploy. Open the service URL, log in, and check the dashboard. `SENDER` starts as `dry_run`, so nothing real is sent. Set up the pinger now.
-5. In the dashboard, set everything up before sending for real:
-   - **Friends** tab: remove the placeholder `friend_username` schedules and add your friend(s) with a time, days and number of reels.
-   - **Reel topics** tab: add sources (creators, Explore), optional caption keywords, then turn on **Find reels automatically**.
-   - **Settings** tab: check the daily cap and the gap between reels.
-6. Set `SENDER` to `instagrapi` under **Environment** and save. Render redeploys and the scheduler logs in to Instagram.
-7. Open the dashboard again. If a red box says the scheduler could not start its sender, the Instagram login failed. See the next section.
+Code is deployed from the **`render-deploy`** branch. `main` is not used for deploys.
+
+1. In Render: **New → Web Service**. Connect GitHub and pick `iamironman-01/Reel-Automation`.
+2. Fill in the form:
+
+   | Field | Value |
+   |-------|-------|
+   | Name | anything, e.g. `reeldrop` (the address becomes `https://reeldrop.onrender.com` or similar) |
+   | Branch | `render-deploy` |
+   | Language / Runtime | **Docker** |
+   | Region | Singapore (closest to India) |
+   | Instance type | **Free** |
+   | Dockerfile path (Advanced) | `./Dockerfile.render` |
+   | Health check path (Advanced) | `/_stcore/health` |
+   | Auto-deploy | On commit (every push to `render-deploy` redeploys) |
+
+   Leave the build and start commands empty: the Dockerfile has them (`python start.py`). Render sets `PORT` itself.
+3. **Environment variables** (Advanced, or the Environment tab later). A hand-made service does not read `render.yaml`, so add them here:
+
+   | Key | Value |
+   |-----|-------|
+   | `DASHBOARD_PASSWORD` | a long password of your choice |
+   | `SENDER` | `dry_run` for the first deploy, `instagrapi` afterwards |
+   | `TZ_NAME` | `Asia/Kolkata` |
+   | `IG_USERNAME` | the sending account's username |
+   | `IG_PASSWORD` | its password |
+   | `IG_TOTP_SECRET` | the two-factor setup key |
+   | `IG_SESSION_B64` | your saved login (see above) |
+   | `STORAGE_IS_EPHEMERAL` | `1` |
+   | `LOGIN_RETRY_MINUTES` | `60` |
+   | `IG_LINK_FALLBACK` | `0` |
+
+4. **Create Web Service.** The first build takes a few minutes. Open the address Render shows, log in with `DASHBOARD_PASSWORD`, and check the dashboard.
+5. Set up friends and sources in the dashboard, then copy the **Advanced** tab text into `config/schedules.yaml` on `render-deploy` if they must survive restarts (see above).
+6. Change `SENDER` to `instagrapi` in the Environment tab and save. Render restarts the service and the scheduler logs in.
+7. Open the dashboard again. A red box means the Instagram login failed; see the next section.
+
+To update the app later, push to `render-deploy`. To stop it, suspend or delete the service in Render.
 
 ## If the Instagram login fails on Render
 
@@ -66,7 +92,7 @@ After a failed Instagram login the scheduler waits `LOGIN_RETRY_MINUTES` (defaul
 
 ## How GitHub triggers deploys (the "webhook")
 
-You don't create a webhook by hand. Connecting the repo installs Render's GitHub app, which listens for pushes. `render.yaml` sets `autoDeployTrigger: commit`, so every push (or merge) to `render-deploy` rebuilds and redeploys the service.
+You don't create a webhook by hand. Connecting the repo installs Render's GitHub app, which listens for pushes. `render.yaml` sets `autoDeployTrigger: commit`, so every push (or merge) to `render-deploy` rebuilds and redeploys the service. A hand-made web service has the same setting under Settings → Build & Deploy → Auto-Deploy.
 
 To deploy only after tests pass, change it to `autoDeployTrigger: checksPass`. That uses the **CI** workflow (`.github/workflows/ci.yml`, runs `pytest`), which requires GitHub Actions to be enabled on the repo (Settings → Actions). I could not confirm that CI runs on this repo, so the default does not depend on it.
 
