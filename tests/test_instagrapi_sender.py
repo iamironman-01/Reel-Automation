@@ -16,7 +16,7 @@ EXCEPTION_NAMES = [
     "ClientLoginRequired", "PleaseWaitFewMinutes", "RateLimitError", "SentryBlock",
     "AccountSuspended", "CaptchaChallengeRequired", "ReloginAttemptExceeded",
     "TwoFactorRequired", "BadPassword", "BadCredentials", "UserNotFound",
-    "ClientThrottledError", "ProxyAddressIsBlocked",
+    "ClientThrottledError", "ProxyAddressIsBlocked", "ClientNeedsUpgradeError",
 ]
 
 
@@ -111,7 +111,14 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setenv("IG_PASSWORD", PASSWORD)
     monkeypatch.delenv("IG_TOTP_SECRET", raising=False)
     monkeypatch.delenv("IG_VERIFICATION_CODE", raising=False)
+    monkeypatch.delenv("IG_LINK_FALLBACK", raising=False)
     return tmp_path
+
+
+@pytest.fixture
+def link_fallback(monkeypatch):
+    """Opt in to sending the link when the native share fails."""
+    monkeypatch.setenv("IG_LINK_FALLBACK", "1")
 
 
 @pytest.fixture
@@ -310,6 +317,23 @@ def test_block_during_login_becomes_blocked_error(mod, name):
     assert PASSWORD not in str(exc.value)
 
 
+def test_needs_upgrade_at_login_explains_the_verification_step(mod):
+    patch_login_error(mod, mod.exc.ClientNeedsUpgradeError(f"out of date {PASSWORD}"))
+    with pytest.raises(RuntimeError) as exc:
+        mod.InstagrapiSender()
+    assert str(exc.value) == mod.VERIFICATION_HELP
+    assert "IG_TOTP_SECRET" in str(exc.value) and "Do not retry" in str(exc.value)
+    assert not isinstance(exc.value, BlockedError)
+    assert PASSWORD not in str(exc.value)
+
+
+def test_needs_upgrade_does_not_save_a_session(mod):
+    patch_login_error(mod, mod.exc.ClientNeedsUpgradeError("out of date"))
+    with pytest.raises(RuntimeError):
+        mod.InstagrapiSender()
+    assert "dump_settings" not in kinds(mod.Client.instances[-1])
+
+
 def test_other_login_errors_propagate(mod):
     patch_login_error(mod, ConnectionError("network down"))
     with pytest.raises(ConnectionError):
@@ -363,6 +387,55 @@ def test_empty_recipient_is_rejected(sender):
 
 # --- send: native / link --------------------------------------------------------------
 
+@pytest.mark.parametrize("value,expected", [
+    ("", False), ("0", False), ("no", False), ("off", False), ("false", False),
+    ("1", True), ("true", True), ("YES", True), (" on ", True),
+])
+def test_link_fallback_env_values(mod, monkeypatch, value, expected):
+    monkeypatch.setenv("IG_LINK_FALLBACK", value)
+    assert mod.link_fallback_enabled() is expected
+
+
+def test_link_fallback_is_off_when_unset(mod):
+    assert mod.link_fallback_enabled() is False
+
+
+def test_native_failure_does_not_send_a_link_by_default(sender, caplog):
+    sender.cl.share_error = ValueError("endpoint changed")
+    with caplog.at_level(logging.WARNING, logger="reeldrop"):
+        with pytest.raises(RuntimeError, match="Native reel share failed") as exc:
+            sender.send("friend", URL)
+    assert "send" not in kinds(sender.cl)            # the link was never sent
+    assert sender.last_method is None
+    assert not isinstance(exc.value, BlockedError)
+    assert "ValueError" in str(exc.value) and "endpoint changed" in str(exc.value)
+    assert "IG_LINK_FALLBACK=1" in str(exc.value)
+
+
+def test_media_id_failure_does_not_send_a_link_by_default(sender):
+    sender.cl.media_id_error = KeyError("owner")
+    with pytest.raises(RuntimeError, match="Native reel share failed"):
+        sender.send("friend", URL)
+    assert "share" not in kinds(sender.cl) and "send" not in kinds(sender.cl)
+
+
+@pytest.mark.parametrize("empty", [None, Message(id="", thread_id=""), Message(None, None),
+                                   types.SimpleNamespace()])
+def test_empty_native_message_does_not_send_a_link_by_default(sender, empty):
+    sender.cl.share_result = empty
+    with pytest.raises(RuntimeError, match="Instagram returned an empty message"):
+        sender.send("friend", URL)
+    assert "send" not in kinds(sender.cl)
+    assert sender.last_method is None
+
+
+def test_native_failure_message_never_contains_the_password(sender):
+    sender.cl.share_error = ValueError(f"share failed for {PASSWORD}")
+    with pytest.raises(RuntimeError) as exc:
+        sender.send("friend", URL)
+    assert PASSWORD not in str(exc.value) and "***" in str(exc.value)
+
+
 def test_native_share_uses_video_and_the_user_id(sender):
     sender.send("friend", URL)
     assert ("media_pk_from_url", URL) in sender.cl.calls
@@ -378,7 +451,7 @@ def test_numeric_recipient_send(sender):
     assert "lookup" not in kinds(sender.cl)
 
 
-def test_falls_back_to_link_when_native_raises(sender, caplog):
+def test_falls_back_to_link_when_native_raises(sender, caplog, link_fallback):
     sender.cl.share_error = ValueError("endpoint changed")
     with caplog.at_level(logging.WARNING, logger="reeldrop"):
         sender.send("friend", URL)
@@ -387,7 +460,7 @@ def test_falls_back_to_link_when_native_raises(sender, caplog):
     assert "ValueError" in caplog.text and "endpoint changed" in caplog.text
 
 
-def test_falls_back_to_link_when_media_id_fails(sender):
+def test_falls_back_to_link_when_media_id_fails(sender, link_fallback):
     sender.cl.media_id_error = KeyError("owner")
     sender.send("friend", URL)
     assert "share" not in kinds(sender.cl)
@@ -397,7 +470,7 @@ def test_falls_back_to_link_when_media_id_fails(sender):
 
 @pytest.mark.parametrize("empty", [None, Message(id="", thread_id=""), Message(None, None),
                                    types.SimpleNamespace()])
-def test_falls_back_to_link_when_native_message_is_empty(sender, empty):
+def test_falls_back_to_link_when_native_message_is_empty(sender, empty, link_fallback):
     sender.cl.share_result = empty
     sender.send("friend", URL)
     assert ("send", URL, [555]) in sender.cl.calls
@@ -412,7 +485,7 @@ def test_message_with_only_id_or_thread_id_counts_as_delivered(sender, partial):
 
 
 @pytest.mark.parametrize("empty", [None, Message(id="", thread_id="")])
-def test_empty_link_message_is_an_error(sender, empty):
+def test_empty_link_message_is_an_error(sender, empty, link_fallback):
     sender.cl.share_error = ValueError("x")
     sender.cl.send_result = empty
     with pytest.raises(RuntimeError, match="did not confirm the message was sent") as exc:
@@ -421,14 +494,14 @@ def test_empty_link_message_is_an_error(sender, empty):
     assert sender.last_method is None
 
 
-def test_both_empty_is_an_error(sender):
+def test_both_empty_is_an_error(sender, link_fallback):
     sender.cl.share_result = Message(id="", thread_id="")
     sender.cl.send_result = None
     with pytest.raises(RuntimeError, match="did not confirm"):
         sender.send("friend", URL)
 
 
-def test_link_failure_with_a_normal_error_propagates(sender):
+def test_link_failure_with_a_normal_error_propagates(sender, link_fallback):
     sender.cl.share_error = ValueError("x")
     sender.cl.send_error = RuntimeError("thread closed")
     with pytest.raises(RuntimeError, match="thread closed") as exc:
@@ -436,7 +509,7 @@ def test_link_failure_with_a_normal_error_propagates(sender):
     assert not isinstance(exc.value, BlockedError)
 
 
-def test_last_method_is_reset_on_each_send(sender):
+def test_last_method_is_reset_on_each_send(sender, link_fallback):
     sender.send("friend", URL)
     assert sender.last_method == "native"
     sender.cl.share_error = ValueError("x")
@@ -471,7 +544,7 @@ def test_block_in_media_id_is_not_retried_as_a_link(sender, mod, name):
 
 
 @pytest.mark.parametrize("name", BLOCK_CASES)
-def test_block_in_link_fallback(sender, mod, name):
+def test_block_in_link_fallback(sender, mod, name, link_fallback):
     sender.cl.share_error = ValueError("x")
     sender.cl.send_error = getattr(mod.exc, name)("nope")
     with pytest.raises(BlockedError, match=name):
@@ -528,7 +601,7 @@ def test_send_text_normal_error_propagates(sender):
 
 # --- the password never leaks ---------------------------------------------------------------------
 
-def test_password_never_in_logs_or_errors(mod, sender, caplog):
+def test_password_never_in_logs_or_errors(mod, sender, caplog, link_fallback):
     sender.cl.share_error = ValueError(f"share failed for {PASSWORD}")
     with caplog.at_level(logging.DEBUG):
         sender.send("friend", URL)

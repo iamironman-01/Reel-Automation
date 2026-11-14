@@ -61,7 +61,11 @@ class InstagrapiSender(Sender):
             raise BlockedError(str(e)) from e
 ```
 
-> **Verified against instagrapi 3.x (from its documentation and source, not against live Instagram).** `direct_media_share` takes a `media_type` argument that defaults to `"photo"`. A reel must be shared with `media_type="video"`, so the sketch above needs `self.cl.direct_media_share(media_id, [uid], media_type="video")`. The real sender in `reeldrop/senders/instagrapi_sender.py` does this, and `instagram-check --reel` reports whether the native share or the link fallback was used. Not yet confirmed on a live account.
+> **Verified against instagrapi 3.x (from its documentation and source, not against live Instagram).** `direct_media_share` takes a `media_type` argument that defaults to `"photo"`. A reel must be shared with `media_type="video"`, so the sketch above needs `self.cl.direct_media_share(media_id, [uid], media_type="video")`. The real sender in `reeldrop/senders/instagrapi_sender.py` does this, and `instagram-check --reel` reports whether the native share worked. Not yet confirmed on a live account.
+
+> **Native reel only by default.** The sketch above sends the link when the native share fails. The real sender does not: a failed native share is an error and the reel stays unsent, so the friend only ever gets the actual reel. `IG_LINK_FALLBACK=1` turns the link fallback back on.
+
+> **Login finding from a live attempt (2026-11-14).** With instagrapi 3.2.12, a fresh login was answered by Instagram's current login flow with a redirect to a verification step that the library could not complete (`missing code_entry context_data`). The library then fell back to the legacy endpoint, which answers `needs_upgrade` ("your version of Instagram is out of date"). That message is misleading: it is not fixed by a newer library version. The sender now turns `ClientNeedsUpgradeError` at login into a clear instruction (approve the login in the app, set `IG_TOTP_SECRET`, do not retry repeatedly). A successful live login has still not been observed.
 
 Tips:
 - Check the whole chain with `python -m reeldrop instagram-check` (login only), then `--to <second account> --send-test-text`, then `--to <second account> --reel <url>`.

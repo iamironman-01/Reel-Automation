@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 
 from .db import init_db
@@ -134,7 +135,8 @@ def _instagram_check(args) -> int:
             if sender.last_method == "native":
                 print(f"Reel sent to @{to} as a native Instagram reel share")
             else:
-                print(f"Reel sent to @{to} as a LINK (native share failed; check the log)")
+                print(f"Reel sent to @{to} as a LINK (native share failed and "
+                      "IG_LINK_FALLBACK is on; check the log)")
     except BlockedError as e:
         # Pause so the scheduler does not keep hitting an account Instagram flagged.
         from .settings import set_paused
@@ -214,5 +216,23 @@ def _discover(args) -> int:
     return 0
 
 
+def load_env() -> None:
+    """Read .env from the current folder, like main.py and dashboard.py do.
+
+    Only the command-line entry point calls this (not main()), so tests and other callers
+    of main() never pick up a real .env. Existing environment variables are not overridden.
+    """
+    try:
+        from dotenv import load_dotenv           # lazy: optional for the queue commands
+    except ImportError:
+        return
+    load_dotenv(os.path.join(os.getcwd(), ".env"))
+
+
+def cli() -> int:
+    load_env()
+    return main()
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(cli())

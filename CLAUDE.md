@@ -58,6 +58,9 @@ sources / pasted links ─► reels table (SQLite) ─► scheduler rule fires �
 - `with connect() as c:` commits or rolls back **and closes** the connection (`_Connection.__exit__`). Do not use a connection after the block.
 - `reeldrop/queue.py` shadows the stdlib module name only if the package directory is itself on `sys.path`. Keep using relative imports inside the package.
 - `instagrapi` is pinned `>=3.2,<4`. Reels must be shared with `media_type="video"`; the library default is `"photo"`, which does not share a reel properly.
+- `InstagrapiSender.send` never sends a link unless `IG_LINK_FALLBACK=1`: a failed native share is an error and the reel stays unsent. Do not make the link fallback the default again.
+- `ClientNeedsUpgradeError` at login does not mean the library is too old. It is the legacy endpoint's answer after Instagram's current login flow asked for a verification step. The sender maps it to `VERIFICATION_HELP`; do not "fix" it by faking a newer app version.
+- `python -m reeldrop` loads `.env` in `cli()`, not in `main()`, so tests that call `main()` never read a real `.env`.
 - Block detection lives in `senders/base.py` (`BLOCK_ERROR_NAMES` / `is_block_error`). That is the single source of truth: do not add separate lists of block exceptions elsewhere.
 - `python -m reeldrop instagram-check` is the manual pre-flight. It sends nothing unless `--send-test-text` or `--reel` is given (both need `--to`), and it only changes the pause flag on a block.
 - Third-party libraries are imported lazily where tests must run without them (`yaml` in `load_config`, `requests` in `notify_me`, `instagrapi` inside the sender). Keep new code importable without those libraries.

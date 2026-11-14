@@ -71,7 +71,7 @@ Open http://localhost:8501 and log in with the password from step 2.
    cli instagram-check --to your_second_account --send-test-text        # sends "ReelDrop test message"
    cli instagram-check --to your_second_account --reel "https://www.instagram.com/reel/XXXXXXXXXXX/"
    ```
-   The last command says whether the reel arrived as a native reel share or as a link. The friend should follow (or accept) the sending account, or the DM can appear under **Message requests**.
+   The last command confirms the reel arrived as a native reel share, or prints an error if Instagram did not accept it (the link is only sent instead when `IG_LINK_FALLBACK=1`). If login fails with a message about a verification step, log in once in the Instagram app, approve the login, set `IG_TOTP_SECRET`, and do not retry repeatedly. The friend should follow (or accept) the sending account, or the DM can appear under **Message requests**.
 5. Restart the scheduler after changing `.env`, and stop if Instagram shows any warning.
 6. Optional: Telegram alerts to your phone. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_MY_CHAT_ID`. (Telegram can also deliver reels instead of Instagram with `SENDER=telegram`, `TELEGRAM_FRIEND_CHAT_ID`, but then the friend gets links on Telegram, not Instagram DMs.)
 

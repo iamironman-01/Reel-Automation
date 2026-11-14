@@ -85,7 +85,7 @@ def test_reel_link_fallback(fake, capsys):
     fake.method = "link"
     assert main(["instagram-check", "--to", "friend", "--reel", REEL]) == 0
     out = capsys.readouterr().out
-    assert "as a LINK (native share failed; check the log)" in out
+    assert "as a LINK (native share failed and IG_LINK_FALLBACK is on; check the log)" in out
     assert "native Instagram reel share" not in out
 
 
@@ -136,3 +136,67 @@ def test_parse_reel_url():
     assert parse_reel_url(" https://instagram.com/p/AbC/?x=1 ") == "https://www.instagram.com/reel/AbC/"
     with pytest.raises(ValueError):
         parse_reel_url("https://example.com/reel/abc")
+
+
+# --- the command-line entry point reads .env -------------------------------------------
+
+def _fake_dotenv(monkeypatch, calls):
+    dotenv = types.ModuleType("dotenv")
+    dotenv.load_dotenv = lambda *a, **k: calls.append((a, k))
+    monkeypatch.setitem(sys.modules, "dotenv", dotenv)
+
+
+def test_load_env_reads_dotenv_from_the_current_folder(monkeypatch, tmp_path):
+    import os
+
+    from reeldrop.__main__ import load_env
+
+    calls = []
+    _fake_dotenv(monkeypatch, calls)
+    monkeypatch.chdir(tmp_path)
+    load_env()
+    assert calls == [((os.path.join(str(tmp_path), ".env"),), {})]
+
+
+def test_load_env_is_a_no_op_without_python_dotenv(monkeypatch):
+    from reeldrop.__main__ import load_env
+
+    monkeypatch.setitem(sys.modules, "dotenv", None)     # import dotenv -> ImportError
+    load_env()                                           # must not raise
+
+
+def test_cli_loads_env_before_running_the_command(fake, monkeypatch, capsys):
+    from reeldrop import __main__ as cli_module
+
+    order = []
+    _fake_dotenv(monkeypatch, order)
+    monkeypatch.setattr(sys, "argv", ["reeldrop", "instagram-check"])
+    real_main = cli_module.main
+    monkeypatch.setattr(cli_module, "main", lambda *a, **k: (order.append("main"), real_main(*a, **k))[1])
+    assert cli_module.cli() == 0
+    assert len(order) == 2 and order[1] == "main"        # load_dotenv first, then main
+    assert "Logged in as @me_test" in capsys.readouterr().out
+
+
+def test_main_itself_never_reads_dotenv(fake, monkeypatch):
+    calls = []
+    _fake_dotenv(monkeypatch, calls)
+    assert main(["instagram-check"]) == 0
+    assert calls == []                                   # tests calling main() stay isolated
+
+
+def test_real_dotenv_does_not_override_existing_variables(monkeypatch, tmp_path):
+    pytest.importorskip("dotenv")
+    from reeldrop.__main__ import load_env
+
+    (tmp_path / ".env").write_text("REELDROP_TEST_A=from_file\nREELDROP_TEST_B=from_file\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("REELDROP_TEST_A", "already_set")
+    monkeypatch.delenv("REELDROP_TEST_B", raising=False)
+    import os
+    try:
+        load_env()
+        assert os.environ["REELDROP_TEST_A"] == "already_set"
+        assert os.environ["REELDROP_TEST_B"] == "from_file"
+    finally:
+        os.environ.pop("REELDROP_TEST_B", None)

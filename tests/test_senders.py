@@ -281,6 +281,7 @@ def ig(load_fresh, monkeypatch, tmp_path):
     monkeypatch.setenv("IG_PASSWORD", "hunter2-password")
     monkeypatch.delenv("IG_TOTP_SECRET", raising=False)
     monkeypatch.delenv("IG_VERIFICATION_CODE", raising=False)
+    monkeypatch.delenv("IG_LINK_FALLBACK", raising=False)
     fakes, Client, exc = make_instagrapi_fakes()
     mod = load_fresh("instagrapi_sender", fakes)
     monkeypatch.setattr(mod, "SESSION", tmp_path / "data" / "session.json")
@@ -326,7 +327,16 @@ def test_instagrapi_user_id_cached(ig):
         [("user_id_from_username", "friend")]
 
 
-def test_instagrapi_fallback_to_direct_send(ig):
+def test_instagrapi_no_link_by_default_when_native_fails(ig):
+    ig.cl.share_error = ValueError("share endpoint changed")
+    with pytest.raises(RuntimeError, match="Native reel share failed"):
+        ig.sender.send("friend", URL)
+    assert not any(c[0] == "direct_send" for c in ig.cl.calls)
+    assert ig.sender.last_method is None
+
+
+def test_instagrapi_fallback_to_direct_send(ig, monkeypatch):
+    monkeypatch.setenv("IG_LINK_FALLBACK", "1")
     ig.cl.share_error = ValueError("share endpoint changed")
     ig.sender.send("friend", URL)
     assert ("direct_send", URL, [555]) in ig.cl.calls
@@ -343,7 +353,8 @@ def test_instagrapi_block_in_native_share_is_not_swallowed(ig, name):
 
 
 @pytest.mark.parametrize("name", ["ChallengeRequired", "PleaseWaitFewMinutes"])
-def test_instagrapi_block_in_fallback_and_lookup(ig, name):
+def test_instagrapi_block_in_fallback_and_lookup(ig, name, monkeypatch):
+    monkeypatch.setenv("IG_LINK_FALLBACK", "1")
     ig.cl.share_error = ValueError("x")
     ig.cl.send_error = getattr(ig.exc, name)("nope")
     with pytest.raises(BlockedError):
@@ -354,7 +365,8 @@ def test_instagrapi_block_in_fallback_and_lookup(ig, name):
         ig.sender.send("someone_else", URL)
 
 
-def test_instagrapi_other_errors_propagate_unchanged(ig):
+def test_instagrapi_other_errors_propagate_unchanged(ig, monkeypatch):
+    monkeypatch.setenv("IG_LINK_FALLBACK", "1")
     ig.cl.share_error = ValueError("x")
     ig.cl.send_error = RuntimeError("user not found")
     with pytest.raises(RuntimeError, match="user not found") as exc:
