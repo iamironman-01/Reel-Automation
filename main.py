@@ -2,6 +2,7 @@ import importlib
 import os
 import sys
 import logging
+import time
 from dataclasses import dataclass, replace
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -173,6 +174,77 @@ def build_client_provider(sender):
         return None
 
 
+SENDER_ERROR_KEY = "sender_error"            # read by the dashboard header
+SENDER_ERROR_AT_KEY = "sender_error_at"
+DEFAULT_LOGIN_RETRY_MINUTES = 60
+
+
+def record_sender_error(message: str) -> None:
+    """Store (or clear, with "") the reason the sender could not start. Never raises."""
+    try:
+        from reeldrop.db import now
+        from reeldrop.settings import set_
+        set_(SENDER_ERROR_KEY, message)
+        set_(SENDER_ERROR_AT_KEY, now() if message else "")
+    except Exception as e:
+        log.warning("Could not record the sender status: %s", e)
+
+
+def login_retry_seconds(env=None) -> int:
+    """How long to wait after a failed Instagram login before the process exits.
+
+    start.py restarts the scheduler within minutes when it exits. For the Instagram
+    sender that would mean a new login attempt every few minutes, and repeated failed
+    logins get an account flagged. LOGIN_RETRY_MINUTES (default 60, 0 = no wait).
+    """
+    raw = (env if env is not None else os.environ).get("LOGIN_RETRY_MINUTES", "")
+    try:
+        minutes = int(str(raw).strip()) if str(raw).strip() else DEFAULT_LOGIN_RETRY_MINUTES
+    except ValueError:
+        minutes = DEFAULT_LOGIN_RETRY_MINUTES
+    return max(0, min(minutes, 24 * 60)) * 60
+
+
+SENDER_RETRY_KEY = "sender_retry_requested"  # set by the dashboard's "Retry login now" button
+_RETRY_POLL_SECONDS = 5
+
+
+def retry_requested() -> bool:
+    """True once if the dashboard asked for an immediate retry (the flag is cleared)."""
+    try:
+        from reeldrop.settings import get, set_
+        if get(SENDER_RETRY_KEY, "0") == "1":
+            set_(SENDER_RETRY_KEY, "0")
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def wait_before_exit(sender_name: str, sleep=time.sleep, env=None, requested=None) -> int:
+    """Pause after a failed Instagram login so restarts do not hammer Instagram.
+
+    Returns the seconds waited. The wait ends early when the dashboard's
+    "Retry login now" button is pressed.
+    """
+    seconds = login_retry_seconds(env) if sender_name == "instagrapi" else 0
+    if not seconds:
+        return 0
+    requested = requested or retry_requested
+    requested()                       # drop a stale request from before this failure
+    log.error("Waiting up to %d minutes before exiting, so the next login attempt is not "
+              "too soon. Fix the problem shown above, then press 'Retry login now' in the "
+              "dashboard (Settings) or restart the service.", seconds // 60)
+    waited = 0
+    while waited < seconds:
+        sleep(_RETRY_POLL_SECONDS)
+        waited += _RETRY_POLL_SECONDS
+        if requested():
+            log.info("Retry requested from the dashboard; exiting now so the login is retried")
+            break
+    return waited
+
+
 def main():
     setup_logging()
     init_db()
@@ -195,7 +267,10 @@ def main():
         # e.g. login failure or missing credentials; the message never includes passwords
         log.error("Could not start sender %r: %s: %s", sender_name, type(e).__name__, e)
         notify_me(f"ReelDrop could not start (sender {sender_name}): {type(e).__name__}: {e}")
+        record_sender_error(f"{type(e).__name__}: {e}")
+        wait_before_exit(sender_name)
         sys.exit(1)
+    record_sender_error("")           # started fine: clear any old error shown in the dashboard
 
     sched = BlockingScheduler(timezone=cfg.timezone)
     register_jobs(sched, cfg, sender)

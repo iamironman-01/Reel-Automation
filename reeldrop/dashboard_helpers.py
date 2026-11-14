@@ -4,6 +4,7 @@ Stdlib only at module level so they can be unit-tested without streamlit,
 pandas or PyYAML installed. yaml / load_config are imported lazily.
 """
 import hmac
+import json
 import os
 import shutil
 import tempfile
@@ -283,6 +284,65 @@ def save_schedules(
             raise ValueError(_describe(e)) from e
         if os.path.exists(path):
             shutil.copymode(path, tmp_path)  # keep original permissions
+        os.replace(tmp_path, path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
+
+# --- sender status and Instagram session ------------------------------------
+
+SENDER_ERROR_KEY = "sender_error"
+SENDER_ERROR_AT_KEY = "sender_error_at"
+SENDER_RETRY_KEY = "sender_retry_requested"
+
+MAX_SESSION_BYTES = 2 * 1024 * 1024
+# Keys instagrapi writes with dump_settings(); a session file must have some of them.
+_SESSION_KEYS = ("authorization_data", "cookies", "uuids", "device_settings")
+
+
+def sender_status(get_setting: Callable[..., object]) -> dict:
+    """Why the scheduler could not start its sender, if it could not ("" when it is fine)."""
+    return {
+        "error": str(get_setting(SENDER_ERROR_KEY, "") or ""),
+        "at": str(get_setting(SENDER_ERROR_AT_KEY, "") or ""),
+        "retry_requested": get_setting(SENDER_RETRY_KEY, "0") == "1",
+    }
+
+
+def validate_session_bytes(raw: bytes) -> dict:
+    """Check that an uploaded file looks like an instagrapi session; return the parsed dict."""
+    if not raw:
+        raise ValueError("The file is empty.")
+    if len(raw) > MAX_SESSION_BYTES:
+        raise ValueError("The file is too large to be an Instagram session file.")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError("The file is not valid JSON. Upload data/session.json from the "
+                         "computer where the login works.") from None
+    if not isinstance(data, dict) or not any(k in data for k in _SESSION_KEYS):
+        raise ValueError("This does not look like an Instagram session file "
+                         "(data/session.json written by ReelDrop).")
+    return data
+
+
+def save_session_file(raw: bytes, path: str) -> None:
+    """Validate an uploaded session file, then write it atomically to `path`.
+
+    The session holds login cookies, so its content is never shown or logged. On any
+    failure the existing file is left untouched and ValueError / OSError is raised.
+    """
+    validate_session_bytes(raw)
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".session-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_path, path)
     except BaseException:
         if os.path.exists(tmp_path):

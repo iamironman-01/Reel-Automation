@@ -350,6 +350,87 @@ def test_config_explore_rejects_mode_and_duplicates():
                                                 {"type": "explore", "value": "reels"}]}})
 
 
+# --- keyword (topic) filter -----------------------------------------------------------
+
+def test_config_keywords_are_normalized():
+    cfg = parse_config({"discovery": {"keywords": [" Cricket ", "#IPL", "cricket", "street   food"],
+                                      "exclude_keywords": ["Ads"]}})
+    assert cfg.discovery.keywords == ["cricket", "ipl", "street food"]
+    assert cfg.discovery.exclude_keywords == ["ads"]
+    assert parse_config({"discovery": {}}).discovery.keywords == []
+    assert parse_config({"discovery": {"keywords": None}}).discovery.exclude_keywords == []
+
+
+@pytest.mark.parametrize("bad,match", [
+    ("cricket", "must be a list"),
+    ([3], "non-empty strings"),
+    ([""], "non-empty strings"),
+    (["#"], "non-empty strings"),
+    (["x" * 61], "longer than 60"),
+    ([f"w{i}" for i in range(51)], "more than 50"),
+])
+def test_config_keywords_validated(bad, match):
+    for key in ("keywords", "exclude_keywords"):
+        with pytest.raises(ValueError, match=match):
+            parse_config({"discovery": {key: bad}})
+
+
+@pytest.mark.parametrize("caption,keep,drop,expected", [
+    ("Best CRICKET shots", ["cricket"], [], True),
+    ("cooking video", ["cricket"], [], False),
+    ("", ["cricket"], [], False),                       # no caption never passes an include filter
+    ("anything", [], [], True),
+    ("", [], [], True),
+    ("sponsored cricket ad", ["cricket"], ["sponsored"], False),
+    ("nice street food", [], ["cricket"], True),
+    ("#IPL final", ["ipl"], [], True),
+    ("street food tour", ["street food", "cricket"], [], True),
+])
+def test_passes_keywords(caption, keep, drop, expected):
+    assert discovery.passes_keywords(reel("A", caption_text=caption), keep, drop) is expected
+
+
+def test_caption_of_handles_objects_dicts_and_missing():
+    assert discovery.caption_of(reel("A", caption_text="hello")) == "hello"
+    assert discovery.caption_of({"code": "A", "caption": {"text": "from dict"}}) == "from dict"
+    assert discovery.caption_of({"code": "A", "caption": "plain"}) == "plain"
+    assert discovery.caption_of(reel("A")) == ""
+    assert discovery.caption_of({"code": "A", "caption": None}) == ""
+
+
+def test_refill_applies_the_keyword_filter(temp_db):
+    c = FakeClient()
+    c.explore_reels = lambda amount: [
+        reel("K1", caption_text="Cricket highlights"), reel("K2", caption_text="cooking"),
+        reel("K3", caption_text="cricket but sponsored"), reel("K4")]
+    result = discovery.refill(
+        disc(src("explore", "reels"), keywords=["cricket"], exclude_keywords=["sponsored"]),
+        client=c)
+    assert [u.split("/")[-2] for u in result.added] == ["K1"]
+    assert result.skipped == 3
+    assert len(queued()) == 1
+
+
+def test_request_amount_overfetches_only_with_keywords():
+    plain = disc(src("explore", "reels"), fetch_per_source=10)
+    assert discovery.request_amount(plain) == 10
+    assert discovery.request_amount(disc(src("explore", "reels"), fetch_per_source=10,
+                                         keywords=["x"])) == 30
+    assert discovery.request_amount(disc(src("explore", "reels"), fetch_per_source=40,
+                                         keywords=["x"])) == 50
+    assert discovery.request_amount(disc(src("explore", "reels"), fetch_per_source=10,
+                                         exclude_keywords=["x"])) == 10
+
+
+def test_refill_asks_for_more_when_keywords_are_set(temp_db):
+    asked = []
+    c = FakeClient()
+    c.explore_reels = lambda amount: (asked.append(amount), [])[1]
+    discovery.refill(disc(src("explore", "reels"), fetch_per_source=5, keywords=["x"]), client=c)
+    discovery.refill(disc(src("explore", "reels"), fetch_per_source=5), client=c)
+    assert asked == [15, 5]
+
+
 def test_fetch_source_none_result_is_empty_list():
     c = FakeClient()
     c.hashtag_medias_top = lambda name, amount: None

@@ -108,3 +108,14 @@ streamlit run dashboard.py
 Open http://localhost:8501.
 
 ✅ **Done when:** you can add reels, see the queue and history, edit schedules, and pause/resume from the browser.
+
+## Update: everything is set with forms (2026-11-14)
+
+The dashboard no longer needs YAML edits for normal use:
+
+- **Friends** tab: add, change and remove friends and their schedules.
+- **Reel topics** tab: sources, caption keywords (`keywords`, `exclude_keywords`), refill numbers and the on/off switch.
+- **Settings** tab: daily cap, gap, quiet days, pause, Instagram login status, **Retry login now**, and session file upload.
+- **Advanced** tab: the raw file, as before.
+
+Form edits go through `reeldrop/config_editor.py` (pure functions on the raw mapping) and are saved with the same validate-then-replace step as the raw editor. `tests/test_dashboard_app.py` runs the page headlessly with Streamlit's `AppTest`.

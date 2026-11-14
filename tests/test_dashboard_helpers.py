@@ -142,3 +142,62 @@ def test_queue_query_all_and_filtered():
 def test_queue_query_rejects_unknown_status():
     with pytest.raises(ValueError):
         queue_query("x'; DROP TABLE reels;--")
+
+
+# --- sender status and session upload -----------------------------------------------
+
+def test_sender_status_defaults_and_values():
+    from reeldrop.dashboard_helpers import sender_status
+
+    assert sender_status(lambda key, default=None: default) == {
+        "error": "", "at": "", "retry_requested": False}
+    store = {"sender_error": "RuntimeError: nope", "sender_error_at": "2026-11-14 20:00:00",
+             "sender_retry_requested": "1"}
+    assert sender_status(lambda key, default=None: store.get(key, default)) == {
+        "error": "RuntimeError: nope", "at": "2026-11-14 20:00:00", "retry_requested": True}
+
+
+SESSION_JSON = b'{"uuids": {"phone_id": "x"}, "cookies": {}, "authorization_data": {"a": 1}}'
+
+
+def test_save_session_file_writes_the_exact_bytes(tmp_path):
+    from reeldrop.dashboard_helpers import save_session_file
+
+    target = tmp_path / "data" / "session.json"          # folder does not exist yet
+    save_session_file(SESSION_JSON, str(target))
+    assert target.read_bytes() == SESSION_JSON
+    assert [p.name for p in target.parent.iterdir()] == ["session.json"]   # no temp file left
+
+
+@pytest.mark.parametrize("raw,match", [
+    (b"", "empty"),
+    (b"not json", "not valid JSON"),
+    (bytes([255, 254, 0]), "not valid JSON"),
+    (b"[1, 2]", "does not look like"),
+    (b'{"timezone": "Asia/Kolkata"}', "does not look like"),
+])
+def test_save_session_file_rejects_bad_uploads_and_keeps_the_old_file(tmp_path, raw, match):
+    from reeldrop.dashboard_helpers import save_session_file
+
+    target = tmp_path / "session.json"
+    target.write_bytes(SESSION_JSON)
+    with pytest.raises(ValueError, match=match):
+        save_session_file(raw, str(target))
+    assert target.read_bytes() == SESSION_JSON
+    assert [p.name for p in tmp_path.iterdir()] == ["session.json"]
+
+
+def test_save_session_file_rejects_huge_files(tmp_path):
+    from reeldrop.dashboard_helpers import MAX_SESSION_BYTES, save_session_file
+
+    with pytest.raises(ValueError, match="too large"):
+        save_session_file(b"{" + b" " * MAX_SESSION_BYTES + b"}", str(tmp_path / "s.json"))
+    assert not (tmp_path / "s.json").exists()
+
+
+def test_session_errors_never_contain_the_file_content(tmp_path):
+    from reeldrop.dashboard_helpers import save_session_file
+
+    with pytest.raises(ValueError) as exc:
+        save_session_file(b'{"sessionid": "SECRET-COOKIE-VALUE"}', str(tmp_path / "s.json"))
+    assert "SECRET-COOKIE-VALUE" not in str(exc.value)

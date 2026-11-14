@@ -24,7 +24,7 @@ It has these parts:
 - **Schedule rules**: time, days, number of reels and recipient, written in `config/schedules.yaml`.
 - **Scheduler**: at each rule's time it sends the next N pending reels (APScheduler 3.x).
 - **Pluggable senders**: `instagrapi` (real Instagram DMs, the main route), dry-run, official API, Telegram (optional). The queue, scheduler and dashboard do not depend on which one is used.
-- **Dashboard**: a Streamlit page to see the queue, history and discovery status, edit schedules, and pause sending.
+- **Dashboard**: a Streamlit page where everything is set with forms: friends and their schedules, where reels come from and caption keywords, daily limits, pause, and the Instagram login status. It also shows the queue and history.
 
 ## Status
 
@@ -150,6 +150,22 @@ Things to know:
 - If Instagram blocks or challenges the account, sending is paused automatically. Stop, clear the warning in the Instagram app, wait 24 to 48 hours, and lower `daily_cap`.
 - Telegram stays optional: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_MY_CHAT_ID` if you want alerts on your phone.
 
+## Dashboard
+
+`streamlit run dashboard.py` (or `scripts\run_local.bat dashboard`), then open http://localhost:8501 and log in with `DASHBOARD_PASSWORD`.
+
+| Tab | What you can do |
+|-----|-----------------|
+| **Friends** | Add a friend (Instagram username) with a time, days and reels per send. Change or remove a schedule, or remove a friend with all their schedules |
+| **Reel topics** | Choose where reels come from (Explore, creators, saved collections, hashtags), keep or drop reels by caption keywords, set the refill numbers, turn automatic finding on or off, and ask for a refill now |
+| **Queue** | See, remove, reorder and assign waiting reels |
+| **Add reels** | Paste specific reel links |
+| **History**, **Stats** | What was sent and when |
+| **Settings** | Pause or resume, daily cap, gap between reels, quiet days, Instagram login status with **Retry login now**, and upload of a session file |
+| **Advanced** | The raw `schedules.yaml`, for anything a form cannot do |
+
+Every form validates the whole schedule file before saving; a rejected change leaves the old file untouched. The scheduler picks changes up within about a minute. A form save rewrites the file, so hand-written comments in it are not kept. The dashboard never logs in to Instagram itself.
+
 ## CLI usage
 
 ```bash
@@ -176,6 +192,7 @@ python -m reeldrop instagram-check [--to USER] [--send-test-text] [--reel URL]  
 | `IG_TOTP_SECRET` | Optional, recommended: base32 two-factor seed so the login code is generated automatically |
 | `IG_VERIFICATION_CODE` | Optional: one-time code if Instagram asks for one at login |
 | `IG_LINK_FALLBACK` | Optional, default off: `1` sends the reel link as text when the native reel share fails. Off means the reel is shared as a real reel or not sent |
+| `LOGIN_RETRY_MINUTES` | Optional, default `60`: after a failed Instagram login the scheduler waits this long before it exits and is restarted, so it does not retry every few minutes. `0` turns the wait off |
 | `IG_ACCESS_TOKEN`, `IG_RECIPIENT_IGSID` | Route A |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_FRIEND_CHAT_ID` | Route D (optional: delivery over Telegram instead of Instagram) |
 | `TELEGRAM_MY_CHAT_ID` | Optional alerts to yourself (pause, empty queue, results) |
@@ -428,6 +445,8 @@ discovery:
   check_every_minutes: 180   # at most one automatic refill per 3 hours
   min_likes: 0
   delay_seconds: 5           # pause between sources
+  keywords: ["cricket", "street food"]   # optional: keep only reels whose caption mentions any
+  exclude_keywords: ["sponsored"]        # optional: never queue reels whose caption mentions any
   sources:
     - type: explore          # Instagram picks the reels; no search term needed
       value: reels           # reels (Explore) | feed (the account's Reels feed)
@@ -450,6 +469,8 @@ discovery:
 | `check_every_minutes` | 180 | At most one automatic refill per this many minutes (30 to 1440) |
 | `min_likes` | 0 | Skip reels with fewer likes than this |
 | `delay_seconds` | 5 | Pause between sources (0 to 120) |
+| `keywords` | none | Topic filter: keep a reel only if its caption contains any of these words or phrases (case-insensitive). A reel without a caption never passes. With keywords set, three times as many reels are requested from each source (at most 50) |
+| `exclude_keywords` | none | Never queue a reel whose caption contains any of these |
 | `sources[].type` | | `explore`, `hashtag`, `user` or `collection` |
 | `sources[].value` | | Hashtag without `#`, username without `@`, or the saved collection's name. For `explore`: `reels` (default, the Explore reels tab) or `feed` (the account's own Reels feed) |
 | `sources[].mode` | `top` | Hashtags only: `top` or `recent` |
@@ -469,7 +490,7 @@ python -m reeldrop discover              # run one refill now
 
 Run `discover --dry-run` first. The dashboard's **Discovery** tab shows the sources, last refill time and result, and pending versus `min_pending`. Its **Refill now** button sets a flag; the scheduler process (not the dashboard, which never logs in to Instagram) picks it up within about a minute.
 
-**Risks.** This uses Instagram's unofficial private API, which violates Instagram's Terms of Service. Accounts can be action-blocked or banned, and the library can break after an Instagram update. Use a test account only, keep `daily_cap` low, and stop if Instagram shows a warning. On a live test account (2026-11-14, instagrapi 3.2.12) the `explore` source returned reels and a native reel DM was delivered, while the `hashtag` sources returned nothing, so prefer `explore`. `user` and `collection` sources have been tested with fakes only. See [reeldrop-plan/12-phase-8-auto-discovery.md](reeldrop-plan/12-phase-8-auto-discovery.md).
+**Risks.** This uses Instagram's unofficial private API, which violates Instagram's Terms of Service. Accounts can be action-blocked or banned, and the library can break after an Instagram update. Use a test account only, keep `daily_cap` low, and stop if Instagram shows a warning. On a live test account (2026-11-14, instagrapi 3.2.12) the `explore` and `user` sources returned reels and a native reel DM was delivered. The `hashtag` sources and Instagram's keyword search returned nothing, so to steer the topic use creators (`user`) and caption `keywords`. `collection` sources and the keyword filter have been tested with fakes only. See [reeldrop-plan/12-phase-8-auto-discovery.md](reeldrop-plan/12-phase-8-auto-discovery.md).
 
 ### Not implemented
 

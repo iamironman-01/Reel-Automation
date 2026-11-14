@@ -38,7 +38,8 @@ sources / pasted links ─► reels table (SQLite) ─► scheduler rule fires �
 | `reeldrop/senders/` | `Sender.send(recipient, reel_url)`, `send_text`; `BlockedError` means stop everything |
 | `reeldrop/settings.py` | key/value flags in the DB: pause switch, discovery request/last run |
 | `main.py` | APScheduler 3.x `BlockingScheduler`: one cron job per rule plus `__reload__` and `__discovery__` |
-| `dashboard.py` | Streamlit UI. Logic that needs tests lives in `reeldrop/dashboard_helpers.py` |
+| `dashboard.py` | Streamlit UI. Logic that needs tests lives in `reeldrop/dashboard_helpers.py` and `reeldrop/config_editor.py` |
+| `reeldrop/config_editor.py` | Pure functions behind the dashboard forms: each takes the raw config mapping and returns a new one (friends, sources, keywords, limits) |
 | `start.py` | supervisor that runs the dashboard and the scheduler in one container |
 
 ## Rules that must keep holding
@@ -61,6 +62,9 @@ sources / pasted links ─► reels table (SQLite) ─► scheduler rule fires �
 - `InstagrapiSender.send` never sends a link unless `IG_LINK_FALLBACK=1`: a failed native share is an error and the reel stays unsent. Do not make the link fallback the default again.
 - `ClientNeedsUpgradeError` at login does not mean the library is too old. It is the legacy endpoint's answer after Instagram's current login flow asked for a verification step. The sender maps it to `VERIFICATION_HELP`; do not "fix" it by faking a newer app version.
 - `python -m reeldrop` loads `.env` in `cli()`, not in `main()`, so tests that call `main()` never read a real `.env`.
+- Dashboard forms never write the schedule file directly: `config_editor` builds the new mapping, `to_yaml` dumps it, and `save_schedules` validates it with `load_config` before `os.replace`. Add new form fields the same way.
+- A failed Instagram login makes `main.py` record `sender_error` in settings (shown in the dashboard) and wait `LOGIN_RETRY_MINUTES` before exiting, because `start.py` restarts the scheduler within minutes and repeated logins get accounts flagged. Do not remove that wait.
+- Render deploys the `render-deploy` branch (`branch:` in `render.yaml`), not `main`.
 - Block detection lives in `senders/base.py` (`BLOCK_ERROR_NAMES` / `is_block_error`). That is the single source of truth: do not add separate lists of block exceptions elsewhere.
 - `python -m reeldrop instagram-check` is the manual pre-flight. It sends nothing unless `--send-test-text` or `--reel` is given (both need `--to`), and it only changes the pause flag on a block.
 - Third-party libraries are imported lazily where tests must run without them (`yaml` in `load_config`, `requests` in `notify_me`, `instagrapi` inside the sender). Keep new code importable without those libraries.
@@ -74,6 +78,7 @@ sources / pasted links ─► reels table (SQLite) ─► scheduler rule fires �
 - Tests use fakes, not the network: fake `requests` / `instagrapi` / `apscheduler` / `dotenv` modules injected through `sys.modules`, and a `FakeScheduler` in `tests/test_job.py`. Do not add tests that need internet.
 - Make retry waits and sleeps zero in tests (`job.RETRY_WAIT_SECONDS`, `time.sleep`, `discovery._sleep`).
 - Six tests are skipped when PyYAML is not installed. They run in CI (`.github/workflows/ci.yml`). Discovery source order is shuffled, so run the suite more than once after touching it.
+- `tests/test_dashboard_app.py` runs `dashboard.py` headlessly with Streamlit's `AppTest` in a temp folder. Use it for anything that depends on widgets; it is skipped without streamlit.
 - Add a test with every behaviour change. Do not claim something is verified unless it actually ran.
 
 ## Git and repo workflow

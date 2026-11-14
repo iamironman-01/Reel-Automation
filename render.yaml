@@ -16,7 +16,7 @@ services:
     dockerContext: .
     plan: starter
     region: singapore            # closest Render region to India
-    branch: main
+    branch: render-deploy       # the deploy branch; push here to redeploy
     autoDeployTrigger: commit
     healthCheckPath: /_stcore/health
     disk:
@@ -24,8 +24,8 @@ services:
       mountPath: /app/data       # database, session.json, logs, schedules.yaml
       sizeGB: 1
     envVars:
-      # Safe default: prints instead of sending. Change to telegram / instagrapi / official
-      # in the Render dashboard only after dry-run works.
+      # Safe default: prints instead of sending. Change to instagrapi (real Instagram DMs)
+      # in the Render dashboard only after the dashboard opens and dry-run works.
       - key: SENDER
         value: dry_run
       - key: TZ_NAME
@@ -45,11 +45,21 @@ services:
         sync: false
       - key: TELEGRAM_CONTROL
         value: "0"
-      # Route B (instagrapi) - cloud IPs trigger more Instagram security checks
+      # Route B (instagrapi, real Instagram DMs). Cloud IPs get more Instagram security
+      # checks: set IG_TOTP_SECRET, and if the login still fails upload a session file in
+      # the dashboard (Settings -> Instagram login).
       - key: IG_USERNAME
         sync: false
       - key: IG_PASSWORD
         sync: false
+      - key: IG_TOTP_SECRET          # base32 two-factor setup key; the login needs it
+        sync: false
+      - key: IG_VERIFICATION_CODE    # optional one-time code
+        sync: false
+      - key: IG_LINK_FALLBACK        # 0 = send the actual reel or nothing; 1 = link if that fails
+        value: "0"
+      - key: LOGIN_RETRY_MINUTES     # wait after a failed Instagram login before retrying
+        value: "60"
       # Route A (official API)
       - key: IG_ACCESS_TOKEN
         sync: false

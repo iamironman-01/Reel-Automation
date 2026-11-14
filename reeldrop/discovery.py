@@ -123,6 +123,44 @@ def passes_likes(media, min_likes: int) -> bool:
         return False
 
 
+def caption_of(media) -> str:
+    """The reel's caption as plain text ('' if there is none)."""
+    text = _attr(media, "caption_text")
+    if text is None:
+        caption = _attr(media, "caption")           # raw API dicts nest it
+        text = caption.get("text") if isinstance(caption, dict) else caption
+    return str(text or "")
+
+
+def passes_keywords(media, keywords, exclude_keywords) -> bool:
+    """Topic filter on the caption, case-insensitive.
+
+    A reel is dropped if any exclude keyword appears in its caption. If `keywords` is not
+    empty the caption must also contain at least one of them, so a reel without a caption
+    never passes an include filter.
+    """
+    if not keywords and not exclude_keywords:
+        return True
+    caption = caption_of(media).casefold()
+    if any(word.casefold() in caption for word in exclude_keywords or ()):
+        return False
+    if keywords:
+        return any(word.casefold() in caption for word in keywords)
+    return True
+
+
+KEYWORD_OVERFETCH = 3      # ask for more reels when a keyword filter will drop most of them
+MAX_FETCH_AMOUNT = 50
+
+
+def request_amount(discovery) -> int:
+    """How many reels to ask each source for (more when a keyword filter is active)."""
+    amount = discovery.fetch_per_source
+    if getattr(discovery, "keywords", None):
+        amount = min(amount * KEYWORD_OVERFETCH, max(MAX_FETCH_AMOUNT, amount))
+    return amount
+
+
 def source_key(source) -> str:
     return f"{source.type}:{source.value}"
 
@@ -159,7 +197,7 @@ def refill(discovery, client, *, dry_run=False, limit=None) -> RefillResult:
         if i > 0 and discovery.delay_seconds > 0:
             _sleep(discovery.delay_seconds)
         try:
-            medias = fetch_source(client, source, discovery.fetch_per_source)
+            medias = fetch_source(client, source, request_amount(discovery))
         except BlockedError:
             raise
         except Exception as e:
@@ -175,6 +213,10 @@ def refill(discovery, client, *, dry_run=False, limit=None) -> RefillResult:
                 break
             code = _attr(media, "code")
             if not is_reel(media) or not code or not passes_likes(media, discovery.min_likes):
+                result.skipped += 1
+                continue
+            if not passes_keywords(media, getattr(discovery, "keywords", None),
+                                   getattr(discovery, "exclude_keywords", None)):
                 result.skipped += 1
                 continue
             items.append((str(code), REEL_URL.format(code=code)))

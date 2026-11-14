@@ -16,18 +16,34 @@ A disk means each deploy restarts the one instance, so the dashboard is unavaila
 
 ## One-time setup
 
-1. **Merge the code to `main`** (Render deploys the `main` branch, see `render.yaml`).
+1. **Use the `render-deploy` branch.** Render deploys that branch (see `branch:` in `render.yaml`). Push to it to redeploy.
 2. In Render: **New → Blueprint**, connect your GitHub account, and pick `iamironman-01/Reel-Automation`. Render reads `render.yaml`.
 3. Fill in the variables marked *sync: false*:
    - `DASHBOARD_PASSWORD`: a real password (the app refuses `change-me`).
-   - Instagram route B (real Instagram DMs): `IG_USERNAME`, `IG_PASSWORD`, and ideally `IG_TOTP_SECRET`. Only with a separate test account.
+   - Instagram route B (real Instagram DMs): `IG_USERNAME`, `IG_PASSWORD` and `IG_TOTP_SECRET` (the two-factor setup key; in a live test the login only succeeded with it). Only with a separate test account.
    - Telegram (optional, alerts or an alternative route): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_MY_CHAT_ID`, and `TELEGRAM_FRIEND_CHAT_ID` if Telegram is the sender.
 4. Deploy. Open the service URL, log in, and check the dashboard. `SENDER` starts as `dry_run`, so nothing real is sent.
-5. When dry-run looks right, set `SENDER` to `instagrapi` (or `telegram`) under **Environment** and save. Render redeploys.
+5. In the dashboard, set everything up before sending for real:
+   - **Friends** tab: remove the placeholder `friend_username` schedules and add your friend(s) with a time, days and number of reels.
+   - **Reel topics** tab: add sources (creators, Explore), optional caption keywords, then turn on **Find reels automatically**.
+   - **Settings** tab: check the daily cap and the gap between reels.
+6. Set `SENDER` to `instagrapi` under **Environment** and save. Render redeploys and the scheduler logs in to Instagram.
+7. Open the dashboard again. If a red box says the scheduler could not start its sender, the Instagram login failed. See the next section.
+
+## If the Instagram login fails on Render
+
+Instagram checks logins from cloud servers more strictly than logins from a home connection.
+
+1. Read the error in the dashboard header or under **Settings → Instagram login**.
+2. Log in to the account once in the Instagram app and approve any "Was this you?" prompt.
+3. Make sure `IG_TOTP_SECRET` is set.
+4. If it still fails, log in on your own computer (`python -m reeldrop instagram-check`), then upload that computer's `data/session.json` under **Settings → Instagram login → Upload a session file**, and press **Retry login now**. The file holds login cookies, so treat it like a password.
+
+After a failed Instagram login the scheduler waits `LOGIN_RETRY_MINUTES` (default 60) before it exits and is restarted, so it does not retry every few minutes and get the account flagged. **Retry login now** ends that wait. The dashboard stays available the whole time.
 
 ## How GitHub triggers deploys (the "webhook")
 
-You don't create a webhook by hand. Connecting the repo installs Render's GitHub app, which listens for pushes. `render.yaml` sets `autoDeployTrigger: commit`, so every push (or merge) to `main` rebuilds and redeploys the service.
+You don't create a webhook by hand. Connecting the repo installs Render's GitHub app, which listens for pushes. `render.yaml` sets `autoDeployTrigger: commit`, so every push (or merge) to `render-deploy` rebuilds and redeploys the service.
 
 To deploy only after tests pass, change it to `autoDeployTrigger: checksPass`. That uses the **CI** workflow (`.github/workflows/ci.yml`, runs `pytest`), which requires GitHub Actions to be enabled on the repo (Settings → Actions). I could not confirm that CI runs on this repo, so the default does not depend on it.
 
@@ -42,11 +58,11 @@ To deploy only after tests pass, change it to `autoDeployTrigger: checksPass`. T
 
 ## Risks specific to a cloud host
 
-- **Instagram Route B from a cloud IP** is riskier: cloud addresses get more login checks and blocks than a home connection. Keep `session.json` on the persistent disk so ReelDrop reuses the login instead of logging in again, and set `IG_TOTP_SECRET` so two-factor prompts can be answered automatically. If it keeps getting challenged, run Route B at home instead. Telegram stays optional here, for alerts to yourself (`TELEGRAM_MY_CHAT_ID`).
+- **Instagram Route B from a cloud IP** is riskier: cloud addresses get more login checks and blocks than a home connection. `session.json` stays on the persistent disk so ReelDrop reuses the login instead of logging in again, and `IG_TOTP_SECRET` lets two-factor prompts be answered automatically. A session uploaded from another computer is then used from a different IP address, which Instagram may also question. If it keeps getting challenged, run Route B at home instead. Telegram stays optional here, for alerts to yourself (`TELEGRAM_MY_CHAT_ID`).
 - **Backups:** the disk is the only copy. Render takes daily disk snapshots, but also download the database now and then (Render Shell: `cp /app/data/reeldrop.db ...`).
 - **Dashboard is public.** The password gate is the only protection. Use a long password.
 - **Telegram control:** keep `TELEGRAM_CONTROL=0` until `TELEGRAM_MY_CHAT_ID` is your own chat id.
 
 ## Not yet verified
 
-This setup was written without access to a Render account or Docker. The first deploy is the real test. If it fails, the Render **Logs** tab shows why.
+This setup was written without access to a Render account or Docker. The first deploy is the real test. If it fails, the Render **Logs** tab shows why. Login, Explore and creator discovery, and native reel sending were seen working from a home computer (2026-11-14), but not from Render.

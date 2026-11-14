@@ -50,6 +50,9 @@ class Discovery:
     min_likes: int = 0
     delay_seconds: int = 5          # pause between sources
     sources: list[DiscoverySource] = field(default_factory=list)
+    # Topic filter on the reel caption (case-insensitive substring match):
+    keywords: list[str] = field(default_factory=list)          # keep a reel only if ANY matches
+    exclude_keywords: list[str] = field(default_factory=list)  # drop a reel if ANY matches
 
 
 @dataclass
@@ -247,6 +250,34 @@ def _parse_discovery_source(s, index: int) -> DiscoverySource:
     return DiscoverySource(type=stype, value=value, mode=mode, to=to)
 
 
+MAX_KEYWORDS = 50
+MAX_KEYWORD_LENGTH = 60
+
+
+def _parse_keywords(raw, key: str) -> list[str]:
+    """Normalize a keyword list: strings only, trimmed, lower-cased, no duplicates."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"discovery: {key} must be a list of words, got {raw!r}")
+    out = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"discovery: {key} entries must be non-empty strings "
+                             f"(quote them in YAML), got {item!r}")
+        word = " ".join(item.split()).lstrip("#").lower()
+        if not word:
+            raise ValueError(f"discovery: {key} entries must be non-empty strings, got {item!r}")
+        if len(word) > MAX_KEYWORD_LENGTH:
+            raise ValueError(f"discovery: {key} entry is longer than {MAX_KEYWORD_LENGTH} "
+                             f"characters: {item[:20]!r}...")
+        if word not in out:
+            out.append(word)
+    if len(out) > MAX_KEYWORDS:
+        raise ValueError(f"discovery: {key} has more than {MAX_KEYWORDS} entries")
+    return out
+
+
 def _parse_discovery(raw) -> Discovery:
     """Validate the optional top-level `discovery:` mapping."""
     if raw is None:
@@ -284,7 +315,11 @@ def _parse_discovery(raw) -> Discovery:
         sources.append(src)
     if enabled and not sources:
         raise ValueError("discovery: enabled is true but sources is empty; add at least one source")
-    return Discovery(enabled=enabled, sources=sources, **ints)
+    return Discovery(enabled=enabled, sources=sources,
+                     keywords=_parse_keywords(raw.get("keywords"), "keywords"),
+                     exclude_keywords=_parse_keywords(raw.get("exclude_keywords"),
+                                                      "exclude_keywords"),
+                     **ints)
 
 
 def parse_config(data) -> Config:

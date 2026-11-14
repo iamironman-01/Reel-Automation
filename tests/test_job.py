@@ -391,3 +391,86 @@ def test_main_starts_telegram_control_only_when_enabled(main_mod, monkeypatch):
     monkeypatch.setenv("TELEGRAM_CONTROL", "1")
     main_mod.main()
     assert started == [1]
+
+
+# --- sender start-up failures: recorded for the dashboard, and no fast re-login loop -------
+
+def test_record_sender_error_sets_and_clears(main_mod, temp_db):
+    from reeldrop import settings
+    main_mod.record_sender_error("RuntimeError: verification needed")
+    assert settings.get(main_mod.SENDER_ERROR_KEY) == "RuntimeError: verification needed"
+    assert settings.get(main_mod.SENDER_ERROR_AT_KEY)
+    main_mod.record_sender_error("")
+    assert settings.get(main_mod.SENDER_ERROR_KEY) == ""
+    assert settings.get(main_mod.SENDER_ERROR_AT_KEY) == ""
+
+
+def test_record_sender_error_never_raises(main_mod, monkeypatch):
+    import reeldrop.settings as settings
+
+    def boom(*a, **k):
+        raise RuntimeError("db gone")
+
+    monkeypatch.setattr(settings, "set_", boom)
+    main_mod.record_sender_error("x")                   # must not raise
+
+
+@pytest.mark.parametrize("value,seconds", [
+    (None, 3600), ("", 3600), ("abc", 3600), ("0", 0), ("-5", 0), ("15", 900),
+    (" 30 ", 1800), ("99999", 24 * 3600),
+])
+def test_login_retry_seconds(main_mod, value, seconds):
+    env = {} if value is None else {"LOGIN_RETRY_MINUTES": value}
+    assert main_mod.login_retry_seconds(env) == seconds
+
+
+@pytest.mark.parametrize("sender_name", ["dry_run", "telegram", "official"])
+def test_no_wait_for_senders_that_do_not_log_in_to_instagram(main_mod, sender_name):
+    slept = []
+    assert main_mod.wait_before_exit(sender_name, sleep=slept.append, env={},
+                                     requested=lambda: False) == 0
+    assert slept == []
+
+
+def test_wait_before_exit_waits_the_full_time(main_mod):
+    slept = []
+    waited = main_mod.wait_before_exit("instagrapi", sleep=slept.append,
+                                       env={"LOGIN_RETRY_MINUTES": "1"},
+                                       requested=lambda: False)
+    assert waited == 60 and sum(slept) == 60
+
+
+def test_wait_before_exit_can_be_disabled(main_mod):
+    slept = []
+    assert main_mod.wait_before_exit("instagrapi", sleep=slept.append,
+                                     env={"LOGIN_RETRY_MINUTES": "0"},
+                                     requested=lambda: False) == 0
+    assert slept == []
+
+
+def test_wait_ends_early_when_the_dashboard_asks_for_a_retry(main_mod):
+    slept = []
+    answers = iter([False, False, False, True])        # stale check, then 3 polls
+
+    waited = main_mod.wait_before_exit("instagrapi", sleep=slept.append,
+                                       env={"LOGIN_RETRY_MINUTES": "60"},
+                                       requested=lambda: next(answers))
+    assert waited == 15 and len(slept) == 3
+
+
+def test_a_stale_retry_request_does_not_skip_the_wait(main_mod, temp_db):
+    from reeldrop import settings
+    settings.set_(main_mod.SENDER_RETRY_KEY, "1")       # pressed before this failure
+    slept = []
+    waited = main_mod.wait_before_exit("instagrapi", sleep=slept.append,
+                                       env={"LOGIN_RETRY_MINUTES": "1"})
+    assert waited == 60                                 # the old request was dropped
+    assert settings.get(main_mod.SENDER_RETRY_KEY) == "0"
+
+
+def test_retry_requested_is_true_once(main_mod, temp_db):
+    from reeldrop import settings
+    assert main_mod.retry_requested() is False
+    settings.set_(main_mod.SENDER_RETRY_KEY, "1")
+    assert main_mod.retry_requested() is True
+    assert main_mod.retry_requested() is False
